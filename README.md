@@ -31,6 +31,19 @@ Full API documentation: [docs/plugins.md](docs/plugins.md).
 Paper `.jar` files do **not** run here: they are Java bytecode written against Bukkit's classes. A Paper plugin
 ports to this API almost line for line (see the table in `docs/plugins.md`).
 
+## Roadmap
+
+Next up (the full list: [TODO.md](TODO.md)):
+
+- Fix the HorizonEdit block writes that fail underground on a real server.
+- Parity tests against the real WorldEdit, compared block by block.
+- An automatic end-to-end test: a server, a bot and a plugin.
+- More of the API: chunk events, block states, block entity data (chest contents), entities by handle.
+- What HorizonEdit still lacks from WorldEdit: `/tool cycler`, biomes and `//regen`, `.schem` files, non-cuboid
+  selections.
+- A converter that helps port Paper plugins to this API.
+- GitHub releases with built servers and plugins, and CI.
+
 ## Building the server
 
 You need [Rust](https://rustup.rs), `curl`, `tar`, `git` and a C compiler.
