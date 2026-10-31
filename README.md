@@ -109,6 +109,7 @@ cargo run -p horizon-plugin-host --example plugin_dry_run -- path/to/plugins "co
 | `engine/` | `horizon.patch` (the changes to Horizon's engine) and the commit it applies to |
 | `server/` | the server folder, with `iniciar.sh` |
 | `docs/plugins.md` | the API documentation |
+| `TODO.md` | what is left to do |
 
 ## License and credits
 
