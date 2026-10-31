@@ -200,6 +200,19 @@ td code { white-space: nowrap; }
 .step pre { font-size: .8rem; padding: 14px 16px; }
 .note { font-size: .9rem; color: var(--muted); margin-top: 24px; }
 
+/* why */
+.why { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+.why-main { grid-row: span 2; background: var(--accent); color: var(--accent-text); border-color: transparent; display: flex; flex-direction: column; justify-content: flex-end; min-height: 280px; }
+.why-main h3 { font-size: 1.6rem; letter-spacing: -.02em; }
+.why-main p { color: inherit; opacity: .9; font-size: 1.02rem; }
+.why-main .ico { background: rgb(255 255 255 / .18); color: inherit; margin-bottom: auto; }
+@media (max-width: 900px) { .why { grid-template-columns: 1fr 1fr; } .why-main { grid-column: span 2; grid-row: auto; min-height: 0; } }
+@media (max-width: 600px) { .why { grid-template-columns: 1fr; } .why-main { grid-column: auto; } }
+.compare td:first-child { font-weight: 600; white-space: nowrap; }
+.compare td { color: var(--muted); }
+.compare td.yes { color: var(--text); }
+.compare td.yes::before { content: "\2713  "; color: var(--accent-strong); font-weight: 800; }
+
 /* footer */
 footer { padding: 40px 0 56px; color: var(--muted); font-size: .88rem; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; justify-content: space-between; }
@@ -221,6 +234,7 @@ footer a { color: var(--muted); }
     </a>
     <div class="links">
       <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#why">Why</a>
       <a class="opt" href="#examples">Examples</a>
       <a class="opt" href="#start">Get started</a>
       <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/blob/main/docs/plugins.md">Docs</a>
@@ -313,7 +327,56 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section id="examples">
+<section id="why">
+  <div class="wrap">
+    <h2>Why run it</h2>
+    <p class="sub">What you get from a Rust server with Rust plugins, compared with a typical Paper setup.</p>
+    <div class="why">
+      <div class="why-main card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+        <h3>No JVM to tune</h3>
+        <p>The server is one native binary built from Rust. There is no Java to install, no garbage collector, and no list of JVM flags to tune for memory and pauses.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-4"/></svg></div>
+        <h3>Safer plugins</h3>
+        <p>The Rust compiler catches null access, use after free and data races before a plugin ships. If a callback still panics, the panic is caught and logged, and the server keeps running.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M20 7 9 18l-5-5"/></svg></div>
+        <h3>The usual extras, built in</h3>
+        <p>Permission groups, reloading plugins at runtime and WorldEdit-style editing come with it. On Paper, each of those is a separate plugin.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></div>
+        <h3>An API you already know</h3>
+        <p><code>on_enable</code>, listeners with priorities, <code>plugin.yml</code>, <code>config.yml</code>, <code>&amp;a</code> colours. A Paper plugin ports almost line for line.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></div>
+        <h3>Open and small</h3>
+        <p>MIT licensed. The whole server side (API, plugin host and engine patch) is one repository you can read in an afternoon.</p>
+      </div>
+    </div>
+
+    <div class="table-wrap compare">
+      <table>
+        <thead><tr><th></th><th>Typical Paper server</th><th>Horizon Server Plugins</th></tr></thead>
+        <tbody>
+          <tr><td>Server runtime</td><td>Java (JVM) with a garbage collector</td><td class="yes">Native Rust binary, no GC</td></tr>
+          <tr><td>Plugin language</td><td>Java / Kotlin</td><td class="yes">Rust</td></tr>
+          <tr><td>Permission groups</td><td>Extra plugin (e.g. LuckPerms)</td><td class="yes">Built in: <code>permissions.yml</code></td></tr>
+          <tr><td>Reloading plugins</td><td><code>/reload</code> is unsupported and discouraged</td><td class="yes"><code>/plugins reload</code>, plugins and configs</td></tr>
+          <tr><td>World editing</td><td>Extra plugin (WorldEdit)</td><td class="yes">HorizonEdit example included</td></tr>
+          <tr><td>Plugin ecosystem</td><td class="yes">Thousands of plugins</td><td>New: the examples and what you write</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><b>Trade-offs, honestly:</b> Paper <code>.jar</code> plugins don't run here, the ecosystem is just starting, and a few APIs are not there yet (chunk events, menus other than chests, block entity data). See <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/blob/main/docs/plugins.md#not-yet">what's not done yet</a>.</p>
+  </div>
+</section>
+
+<section id="examples" class="alt">
   <div class="wrap">
     <h2>Example plugins included</h2>
     <p class="sub">Each one is written from scratch against the API, so you can read it and copy what you need.</p>
@@ -340,7 +403,7 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section class="alt">
+<section>
   <div class="wrap">
     <h2>Coming from Paper?</h2>
     <p class="sub">Paper <code>.jar</code> files don't run here, since they are Java bytecode built against Bukkit's classes. But a Paper plugin ports to this API almost line for line.</p>
