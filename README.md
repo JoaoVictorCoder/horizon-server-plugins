@@ -15,12 +15,19 @@ A **Minecraft: Java Edition 26.3** server in Rust with **Paper-style plugins**, 
 - **`/plugins`** and **`/plugins reload`**: reload plugins and their configs without a restart.
 - **Events**: join/quit (with their messages), move, death, chat, clicks, block break/place, buckets, attacks,
   mob spawns and deaths, explosions, fluids and fire, pistons, chest menus, ticks.
-- **Example plugins** (`api/examples/`):
+- **Example plugins** (`api/examples/`), small on purpose, to read and copy from:
   - **Homes**: `/sethome`, `/home`, `/delhome`, `/homes` (a menu), spawn protection.
   - **Dragão**: `/dragao [colour]` (or `/dragon`) builds a little dragon out of blocks.
-- **Plugins built on it**, in their own repositories:
-  - **[HorizonEdit](https://github.com/JoaoVictorCoder/horizonedit)**: most of WorldEdit's commands, written
-    from scratch (no WorldEdit code).
+
+## Plugins built on it
+
+Full plugins live in repositories of their own and depend on `horizon-plugin-api` through `git`:
+
+- **[HorizonEdit](https://github.com/JoaoVictorCoder/horizonedit)**: most of WorldEdit's commands (selections,
+  `//set`, `//copy`/`//paste`, shapes, brushes, tools, schematics, undo), written from scratch (no WorldEdit code).
+  Build it with `cargo build --release` in its repository and copy the library into `plugins/`.
+
+Made one? Open an issue or a pull request to list it here.
 
 Full API documentation: [docs/plugins.md](docs/plugins.md).
 
@@ -60,7 +67,7 @@ The first build takes a while (about 10 minutes); later ones are quick.
    `~/.local/share/horizon-launcher/server-runtime/game-files/horizon-client/26.3`.
    Details: [Horizon's hosting.md](https://github.com/horizon-rust/horizon/blob/main/docs/hosting.md).
 2. **Server folder.** `server/` already has `iniciar.sh` (the start script). Copy the plugins you want into
-   `server/plugins/`:
+   `server/plugins/` (the examples from `dist/plugins/`, and others such as HorizonEdit from their own builds):
 
    ```sh
    cp dist/plugins/* server/plugins/
@@ -99,7 +106,8 @@ impl Plugin for Hello {
 horizon_plugin!(Hello, PluginDescription::new("Hello", "1.0.0"));
 ```
 
-`cargo build --release` makes `libhello.so`, which goes in `plugins/`. To try plugins without a server:
+`cargo build --release` makes `libhello.so`, which goes in `plugins/`. For a whole plugin in its own repository,
+see [HorizonEdit](https://github.com/JoaoVictorCoder/horizonedit). To try plugins without a server:
 
 ```sh
 cargo run -p horizon-plugin-host --example plugin_dry_run -- path/to/plugins "command arg"
@@ -109,7 +117,7 @@ cargo run -p horizon-plugin-host --example plugin_dry_run -- path/to/plugins "co
 
 | Folder | What it is |
 |---|---|
-| `api/` | `horizon-plugin-api`: the plugin API (no dependencies, a C ABI) and the examples |
+| `api/` | `horizon-plugin-api`: the plugin API (no dependencies, a C ABI) and the examples (`api/examples/`) |
 | `host/` | `horizon-plugin-host`: loads `plugins/`, events, commands, permissions, reload |
 | `engine/` | `horizon.patch` (the changes to Horizon's engine) and the commit it applies to |
 | `server/` | the server folder, with `iniciar.sh` |

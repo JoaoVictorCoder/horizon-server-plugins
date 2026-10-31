@@ -178,6 +178,7 @@ h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); letter-spacing: -.025em; margin: 0
 .example h3 { font-size: 1.25rem; margin: 6px 0 8px; }
 .cmds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .cmds code { font-size: .78rem; }
+.example .more { margin-top: auto; padding-top: 16px; font-size: .9rem; }
 
 /* table */
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
@@ -236,6 +237,7 @@ footer a { color: var(--muted); }
       <a class="opt" href="#features">Features</a>
       <a class="opt" href="#why">Why</a>
       <a class="opt" href="#examples">Examples</a>
+      <a class="opt" href="#plugins">Plugins</a>
       <a class="opt" href="#start">Get started</a>
       <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/blob/main/docs/plugins.md">Docs</a>
       <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins">GitHub</a>
@@ -258,7 +260,7 @@ footer a { color: var(--muted); }
       </div>
       <div class="stats">
         <div><b>25+</b>events</div>
-        <div><b>3</b>example plugins</div>
+        <div><b>2</b>example plugins</div>
         <div><b>C ABI</b>any Rust version</div>
       </div>
     </div>
@@ -379,7 +381,7 @@ footer a { color: var(--muted); }
 <section id="examples" class="alt">
   <div class="wrap">
     <h2>Example plugins included</h2>
-    <p class="sub">Each one is written from scratch against the API, so you can read it and copy what you need.</p>
+    <p class="sub">Small on purpose: each one shows a part of the API in a few hundred lines, so you can read it and copy what you need.</p>
     <div class="examples">
       <div class="card example">
         <span class="tag">api/examples/homes</span>
@@ -397,7 +399,29 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section>
+<section id="plugins">
+  <div class="wrap">
+    <h2>Plugins built on it</h2>
+    <p class="sub">Full plugins live in repositories of their own and depend on <code>horizon-plugin-api</code> through <code>git</code>, like any plugin you write.</p>
+    <div class="examples">
+      <div class="card example">
+        <span class="tag">JoaoVictorCoder/horizonedit</span>
+        <h3>HorizonEdit</h3>
+        <p>WorldEdit's commands, rewritten in Rust with no WorldEdit code: selections and the wand, fills and replaces, copy and paste, shapes and expressions, brushes and tools, schematics and undo.</p>
+        <div class="cmds"><code>//wand</code><code>//set</code><code>//replace</code><code>//copy</code><code>//paste</code><code>//sphere</code><code>/brush</code><code>//undo</code></div>
+        <p class="more"><a href="https://github.com/JoaoVictorCoder/horizonedit">View on GitHub</a></p>
+      </div>
+      <div class="card example">
+        <span class="tag">your-name/your-plugin</span>
+        <h3>Yours next</h3>
+        <p>Made a plugin with the API? Open an issue or a pull request and it gets listed here and in the README.</p>
+        <p class="more"><a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/issues">Open an issue</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
   <div class="wrap">
     <h2>Coming from Paper?</h2>
     <p class="sub">Paper <code>.jar</code> files don't run here, since they are Java bytecode built against Bukkit's classes. But a Paper plugin ports to this API almost line for line.</p>
@@ -434,7 +458,8 @@ cd horizon-server-plugins
       <div class="step">
         <h3>Add the game files</h3>
         <p>Prepared from your own copy of Minecraft. The easy way is to install the <a href="https://playhorizon.dev">Horizon launcher</a> and play once.</p>
-        <div class="window"><pre><code>cp dist/plugins/* server/plugins/
+        <div class="window"><pre><code><span class="cm"># the examples, plus any plugin you built</span>
+cp dist/plugins/* server/plugins/
 cd server
 ./iniciar.sh --initSettings</code></pre></div>
       </div>
@@ -445,7 +470,7 @@ cd server
 <span class="cm"># then: op YourName, plugins, stop</span></code></pre></div>
       </div>
     </div>
-    <p class="note">To write your own plugin, add <code>horizon-plugin-api</code> as a git dependency with <code>crate-type = ["cdylib"]</code>, then run <code>cargo build --release</code> and drop the library into <code>plugins/</code>.</p>
+    <p class="note">To write your own plugin, add <code>horizon-plugin-api</code> as a git dependency with <code>crate-type = ["cdylib"]</code>, then run <code>cargo build --release</code> and drop the library into <code>plugins/</code>. <a href="https://github.com/JoaoVictorCoder/horizonedit">HorizonEdit</a> is a whole plugin set up that way.</p>
   </div>
 </section>
 
