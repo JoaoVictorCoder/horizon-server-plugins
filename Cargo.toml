@@ -1,0 +1,10 @@
+# The plugin API and its host, for plugin authors: `cargo build -p horizon-plugin-api --example homes`.
+# The server itself is Horizon with engine/horizon.patch: ./build.sh.
+[workspace]
+members = ["api", "host"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"

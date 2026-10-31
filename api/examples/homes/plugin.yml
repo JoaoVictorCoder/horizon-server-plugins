@@ -1,0 +1,38 @@
+name: Homes
+version: 1.0.0
+description: Set homes, go back to them, and keep spawn safe
+author: Horizon
+api-version: '1'
+commands:
+  sethome:
+    description: Sets a home where you stand
+    usage: /<command> [name]
+    permission: homes.use
+  home:
+    description: Teleports you to a home
+    usage: /<command> [name]
+    aliases: [h]
+    permission: homes.use
+  delhome:
+    description: Deletes a home
+    usage: /<command> <name>
+    permission: homes.use
+  homes:
+    description: Lists your homes in a menu
+    permission: homes.use
+permissions:
+  homes.use:
+    description: Set and use homes
+    default: true
+  homes.unlimited:
+    description: No limit on homes
+    default: op
+  homes.spawn.build:
+    description: Build within the spawn's radius
+    default: op
+  homes.*:
+    default: op
+    children:
+      homes.use: true
+      homes.unlimited: true
+      homes.spawn.build: true

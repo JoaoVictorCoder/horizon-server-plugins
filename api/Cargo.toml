@@ -1,0 +1,31 @@
+[package]
+name = "horizon-plugin-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Server plugins for Horizon in Rust, in the shape of Bukkit and Paper's plugin API"
+
+# No dependencies: a plugin built with any Rust links only this crate, and talks to the server
+# through the C ABI in `abi.rs`, so a plugin and the server need not share a compiler.
+[dependencies]
+
+# An example plugin, built as the library a server loads:
+# `cargo build -p horizon-plugin-api --example homes`, then copy
+# target/debug/examples/libhomes.so (homes.dll, libhomes.dylib) into plugins/.
+[[example]]
+name = "homes"
+path = "examples/homes/main.rs"
+crate-type = ["cdylib"]
+
+# Another: `/dragao` builds a little dragon of blocks beside the player.
+[[example]]
+name = "dragao"
+path = "examples/dragao/main.rs"
+crate-type = ["cdylib"]
+
+# HorizonEdit: WorldEdit's commands (`//set`, `//copy`, `//undo`...), written anew for this API.
+[[example]]
+name = "horizonedit"
+path = "examples/horizonedit/main.rs"
+crate-type = ["cdylib"]

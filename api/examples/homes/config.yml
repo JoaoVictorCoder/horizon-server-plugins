@@ -1,0 +1,10 @@
+# Homes' settings.
+max-homes: 3
+# Blocks around 0,0 of the overworld only players with homes.spawn.build change; 0 turns it off.
+spawn-radius: 16
+messages:
+  welcome: '&6Welcome, &e%player%&6! &7/sethome saves where you stand.'
+  set: '&aHome &e%home% &aset.'
+  gone: '&cNo home called &e%home%&c.'
+  limit: '&cYou have %max% homes already: /delhome one first.'
+  spawn: '&cSpawn is protected.'

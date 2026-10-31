@@ -1,0 +1,6 @@
+/target
+/.build
+/dist
+/server/*
+!/server/iniciar.sh
+!/server/README.md

@@ -1,0 +1,1540 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ab0628f..978cb09 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1132,6 +1132,8 @@ dependencies = [
+  "horizon-hdr",
+  "horizon-items",
+  "horizon-mods",
++ "horizon-plugin-api",
++ "horizon-plugin-host",
+  "horizon-protocol",
+  "horizon-server-files",
+  "horizon-shader-api",
+@@ -1300,6 +1302,17 @@ dependencies = [
+  "zip",
+ ]
+ 
++[[package]]
++name = "horizon-plugin-api"
++version = "0.1.0"
++
++[[package]]
++name = "horizon-plugin-host"
++version = "0.1.0"
++dependencies = [
++ "horizon-plugin-api",
++]
++
+ [[package]]
+ name = "horizon-port-pack"
+ version = "0.1.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 383252a..7dc0e8e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -15,6 +15,8 @@ members = [
+     "crates/horizon-server-files",
+     "crates/horizon-anticheat",
+     "crates/horizon-server",
++    "crates/horizon-plugin-api",
++    "crates/horizon-plugin-host",
+     "crates/horizon-bots",
+     "crates/horizon-assets",
+     "crates/horizon-protocol",
+diff --git a/crates/horizon-client/Cargo.toml b/crates/horizon-client/Cargo.toml
+index ff97d94..dbce9a9 100644
+--- a/crates/horizon-client/Cargo.toml
++++ b/crates/horizon-client/Cargo.toml
+@@ -24,6 +24,9 @@ horizon-protocol = { path = "../horizon-protocol" }
+ horizon-server-files = { path = "../horizon-server-files" }
+ # The dedicated server's anticheat, off unless server.toml's [anticheat] turns it on (docs/anticheat.md).
+ horizon-anticheat = { path = "../horizon-anticheat" }
++# Server plugins in Rust, shaped like Paper's: loaded from a dedicated server's plugins/ (docs/plugins.md).
++horizon-plugin-api = { path = "../horizon-plugin-api" }
++horizon-plugin-host = { path = "../horizon-plugin-host" }
+ # Shader packs: reading them and turning their GLSL into naga modules.
+ horizon-shaders = { path = "../horizon-shaders" }
+ # Horizon's own shader packs: the format, the stages and the check (docs/shaders.md).
+diff --git a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+index 6fa1d29..e65f912 100644
+--- a/crates/horizon-client/src/game.rs
++++ b/crates/horizon-client/src/game.rs
+@@ -172,6 +172,7 @@ mod native_panel;
+ mod native_panel_recipes;
+ mod native_recipes;
+ mod native_server;
++mod plugins;
+ mod native_shaders;
+ mod native_world_read;
+ mod natural_spawning;
+@@ -1015,6 +1016,9 @@ impl LevelAccess for GameLevel<'_> {
+                 horizon_world::level::Spread::Fire => "fire",
+             };
+             self.native_block_spread(self.dimension, kind, from, to, &mut canceled);
++            if !canceled {
++                canceled = plugins::plugins_block_spread(self.dimension, kind, from, to);
++            }
+         }
+         !canceled
+     }
+@@ -1029,6 +1033,9 @@ impl LevelAccess for GameLevel<'_> {
+         if self.native_authoritative {
+             let step = direction.normal();
+             self.native_piston_move(self.dimension, piston, step, push, destroy, &mut canceled);
++            if !canceled {
++                canceled = plugins::plugins_piston_move(self.dimension, piston, step, push, destroy);
++            }
+         }
+         !canceled
+     }
+@@ -4713,6 +4720,10 @@ impl Game<'_> {
+         // the block, and a guest's acknowledgement puts it back in its world.
+         let mut canceled = false;
+         self.native_destroy_block(pos, state, &mut canceled);
++        // Then the server's plugins (BlockBreakEvent).
++        if !canceled {
++            canceled = self.plugins_destroy_block(pos, state);
++        }
+         if canceled {
+             return Ok(());
+         }
+@@ -4972,6 +4983,9 @@ impl Game<'_> {
+         if let Some(hit) = block_hit {
+             let mut canceled = false;
+             self.native_right_click_block(hit.pos, hit.face, &mut canceled);
++            if !canceled {
++                canceled = self.plugins_right_click_block(hit.pos, hit.face);
++            }
+             if canceled {
+                 return Ok(true);
+             }
+@@ -5154,9 +5168,16 @@ impl Game<'_> {
+         let mut claimed = false;
+         if let Some(hit) = block_hit {
+             self.native_use_item_on(&stack, hit.pos, hit.face, &mut claimed);
++            // Plugins' BlockPlaceEvent, before a block item is used.
++            if !claimed {
++                claimed = self.plugins_use_item_on(&stack, hit.pos, hit.face);
++            }
+         }
+         if !claimed && !on_block {
+             self.native_use_item(&stack, &mut claimed);
++            if !claimed {
++                claimed = self.plugins_use_item(&stack);
++            }
+         }
+         if claimed {
+             self.swing_arm();
+@@ -11228,6 +11249,9 @@ impl Game<'_> {
+             }
+             let mut canceled = false;
+             self.native_fill_bucket(stack, hit.pos, &mut canceled);
++            if !canceled {
++                canceled = self.plugins_fill_bucket(stack, hit.pos);
++            }
+             if canceled {
+                 return Ok(UseResult::Fail);
+             }
+@@ -11280,6 +11304,9 @@ impl Game<'_> {
+             let target = self.bucket_target(content, &hit);
+             let mut canceled = false;
+             self.native_fill_bucket(stack, target, &mut canceled);
++            if !canceled {
++                canceled = self.plugins_fill_bucket(stack, target);
++            }
+             if canceled {
+                 return Ok(UseResult::Fail);
+             }
+diff --git a/crates/horizon-client/src/game/creatures.rs b/crates/horizon-client/src/game/creatures.rs
+index 89729e0..0101536 100644
+--- a/crates/horizon-client/src/game/creatures.rs
++++ b/crates/horizon-client/src/game/creatures.rs
+@@ -383,6 +383,10 @@ impl Game<'_> {
+             };
+             horizon_client::mobs::raider::finalize(&mut mob, reason);
+         }
++        // The server's plugins (EntitySpawnEvent) may keep it out.
++        if self.plugins_entity_spawn(mob.id, &kind, at) {
++            return None;
++        }
+         let id = mob.id;
+         self.mobs.push(mob);
+         self.enchant_spawn_equipment(id);
+@@ -914,6 +918,8 @@ impl Game<'_> {
+     }
+     /// LivingEntity.die / dropAllDeathLoot.
+     fn mob_died(&mut self, m: &Mob) {
++        // The server's plugins hear it first (EntityDeathEvent).
++        self.plugins_entity_death(m.id, &m.kind.id, [m.position.x, m.position.y, m.position.z]);
+         // LivingEntity.die: a sleeper gets up, and its bed is free again.
+         if let Some(bed) = horizon_client::mobs::villager::sleeping_pos(m) {
+             self.wake_villager(m.id);
+diff --git a/crates/horizon-client/src/game/dedicated.rs b/crates/horizon-client/src/game/dedicated.rs
+index 9087ce1..24c9a29 100644
+--- a/crates/horizon-client/src/game/dedicated.rs
++++ b/crates/horizon-client/src/game/dedicated.rs
+@@ -843,6 +843,9 @@ impl Game<'_> {
+         if let Some(host) = self.lan.as_mut() {
+             host.hub.entity_range_percent = props.entity_broadcast_range_percentage;
+         }
++        // The server's plugins (docs/plugins.md), enabled before the first
++        // tick builds the players' command tree.
++        self.plugins_start();
+         // The dedicated server's open is complete before its first tick.
+         self.native_lifecycle_world_ready();
+         let mut state = ServerState {
+@@ -1113,6 +1116,9 @@ impl Game<'_> {
+     /// everything else goes to the game's dispatcher.
+     fn console_command(&mut self, state: &mut ServerState, line: &str) {
+         let line = line.strip_prefix('/').unwrap_or(line);
++        if self.plugins_console_command(line) {
++            return;
++        }
+         let mut words = line.split_whitespace();
+         let Some(command) = words.next() else {
+             return;
+@@ -1615,6 +1621,7 @@ impl Game<'_> {
+         // The close request starts before player and world saves.
+         self.native_lifecycle.begin_close();
+         log("INFO", "Stopping server");
++        self.plugins_stop();
+         log("INFO", "Saving players");
+         if let Some(host) = self.lan.take() {
+             for g in &host.hub.guests {
+diff --git a/crates/horizon-client/src/game/explosion.rs b/crates/horizon-client/src/game/explosion.rs
+index 6dd0782..0e34a3a 100644
+--- a/crates/horizon-client/src/game/explosion.rs
++++ b/crates/horizon-client/src/game/explosion.rs
+@@ -692,6 +692,7 @@ impl Game<'_> {
+         let mut targets = self.exploded_positions(center, radius, resists);
+         let dimension = self.dim.id();
+         self.native_explosion_detonate(dimension, center, &mut targets);
++        self.plugins_explosion(dimension, center, &mut targets);
+         let pushed = self.explosion_hurt_entities(center, radius, damage_type, interaction);
+         if interaction != BlockInteraction::Keep {
+             // Util.shuffle(list, level.random)
+diff --git a/crates/horizon-client/src/game/lan.rs b/crates/horizon-client/src/game/lan.rs
+index e6dee53..414e41e 100644
+--- a/crates/horizon-client/src/game/lan.rs
++++ b/crates/horizon-client/src/game/lan.rs
+@@ -1750,6 +1750,7 @@ impl Game<'_> {
+                     event @ (HostEvent::Chat { .. } | HostEvent::Warn(_) | HostEvent::Error(_)) => {
+                         self.lan_log_event(event);
+                     }
++                    HostEvent::PluginChat(chat) => self.plugins_hold_chat(*chat),
+                     HostEvent::PlayerChat { sender, .. } => {
+                         if let Some(conn) = host
+                             .hub
+@@ -1785,6 +1786,7 @@ impl Game<'_> {
+                                 "INFO",
+                                 &format!("System chat: {} joined the game", g.name),
+                             );
++                            self.plugins_joined(&mut host, conn);
+                         } else if self.player.is_some()
+                             && let Some(g) = host.hub.guest(conn)
+                             && g.placed
+@@ -1829,6 +1831,7 @@ impl Game<'_> {
+                                 "INFO",
+                                 &format!("System chat: {} left the game", guest.name),
+                             );
++                            self.plugins_left(&mut host, &guest);
+                         } else if self.player.is_some() && guest.placed {
+                             // ServerGamePacketListenerImpl.removePlayerFromWorld.
+                             let who = self.player_text(&guest.name, guest.uuid);
+diff --git a/crates/horizon-client/src/game/lan_actions.rs b/crates/horizon-client/src/game/lan_actions.rs
+index 137b6c9..291531c 100644
+--- a/crates/horizon-client/src/game/lan_actions.rs
++++ b/crates/horizon-client/src/game/lan_actions.rs
+@@ -1201,6 +1201,11 @@ impl Game<'_> {
+                         return;
+                     }
+                     let face = direction(i32::from(a.direction));
++                    // The server's plugins (a left click, PlayerInteractEvent):
++                    // a canceled one digs nothing, and the ack puts the block back.
++                    if self.plugins_left_click(&host.hub, conn, a.pos, face) {
++                        return;
++                    }
+                     let play = host.play.entry(conn).or_default();
+                     play.digging = Some((a.pos, face));
+                     play.dig_start = host.hub.ticks;
+@@ -2146,6 +2151,9 @@ impl Game<'_> {
+             && self.as_guest(host, conn, |g| {
+                 let mut canceled = false;
+                 g.native_attack_entity(id, &kind, at, &mut canceled);
++                if !canceled {
++                    canceled = g.plugins_attack_entity(id, &kind, at);
++                }
+                 canceled
+             }) == Some(true)
+         {
+@@ -2408,6 +2416,27 @@ impl Game<'_> {
+         };
+         let skip = usize::from(text.starts_with('/'));
+         let command = &text[skip..];
++        let utf16 = |byte: usize| command[..byte.min(command.len())].encode_utf16().count() as i32;
++        // A plugin's command: its completer answers.
++        if let Some((start, words)) = self.plugins_suggestions(&host.hub, conn, command) {
++            let mut w = horizon_protocol::buf::Writer::new();
++            w.varint(id);
++            w.varint(utf16(start) + skip as i32);
++            w.varint(utf16(command.len()) - utf16(start));
++            w.varint(words.len().min(1000) as i32);
++            for s in words.iter().take(1000) {
++                w.string(s);
++                w.bool(false);
++            }
++            host.hub.send_to(
++                conn,
++                &C::Unknown(
++                    horizon_protocol::ids::play::clientbound::COMMAND_SUGGESTIONS,
++                    w.data,
++                ),
++            );
++            return;
++        }
+         let d = vanilla::game_dispatcher();
+         let level = std::mem::replace(&mut self.ui.registries.permission, permission);
+         let parse = d.parse(command, &self.ui.registries);
+@@ -2416,7 +2445,6 @@ impl Game<'_> {
+         self.ui.registries.permission = level;
+         // ServerCommandSuggestionsProvider.limitSuggestionCount.
+         suggestions.truncate(1000);
+-        let utf16 = |byte: usize| command[..byte.min(command.len())].encode_utf16().count() as i32;
+         let mut w = horizon_protocol::buf::Writer::new();
+         w.varint(id);
+         w.varint(utf16(start) + skip as i32);
+diff --git a/crates/horizon-client/src/game/native_lifecycle.rs b/crates/horizon-client/src/game/native_lifecycle.rs
+index c875169..fc032f6 100644
+--- a/crates/horizon-client/src/game/native_lifecycle.rs
++++ b/crates/horizon-client/src/game/native_lifecycle.rs
+@@ -265,6 +265,7 @@ impl Game<'_> {
+         if let Some((context, phase)) = self.native_lifecycle.server_tick_start(world_running) {
+             self.native_lifecycle.read_scope = true;
+             self.native_server_tick(&context, phase);
++            self.plugins_tick(&context, true);
+             self.native_lifecycle.read_scope = false;
+         }
+     }
+@@ -274,6 +275,7 @@ impl Game<'_> {
+         if let Some((context, phase)) = self.native_lifecycle.server_tick_end(paused) {
+             self.native_lifecycle.read_scope = true;
+             self.native_server_tick(&context, phase);
++            self.plugins_tick(&context, false);
+             self.native_lifecycle.read_scope = false;
+         }
+     }
+diff --git a/crates/horizon-client/src/game/native_menus.rs b/crates/horizon-client/src/game/native_menus.rs
+index 0feee32..5be56fd 100644
+--- a/crates/horizon-client/src/game/native_menus.rs
++++ b/crates/horizon-client/src/game/native_menus.rs
+@@ -231,8 +231,14 @@ impl Game<'_> {
+                     slot,
+                     button,
+                     mode,
+-                } => self.native_menu_clicked(uuid, window, slot, button, mode),
+-                NativeMenuEvent::Closed { uuid, window } => self.native_menu_closed(uuid, window),
++                } => {
++                    self.native_menu_clicked(uuid, window, slot, button, mode);
++                    self.plugins_menu_clicked(uuid, window, slot, button, mode);
++                }
++                NativeMenuEvent::Closed { uuid, window } => {
++                    self.native_menu_closed(uuid, window);
++                    self.plugins_menu_closed(uuid, window);
++                }
+             }
+         }
+     }
+diff --git a/crates/horizon-client/src/game/native_server.rs b/crates/horizon-client/src/game/native_server.rs
+index 598c794..d499943 100644
+--- a/crates/horizon-client/src/game/native_server.rs
++++ b/crates/horizon-client/src/game/native_server.rs
+@@ -69,6 +69,9 @@ fn parser(kind: &str) -> Option<(&'static str, Value)> {
+     Some(match kind {
+         "word" => ("brigadier:string", json!({"type": "word"})),
+         "text" => ("brigadier:string", json!({"type": "greedy"})),
++        // The rest of the line, completed by the server (a plugin's
++        // completer: `ask_server`).
++        "suggested" => ("brigadier:string", json!({"type": "greedy"})),
+         "integer" => ("brigadier:integer", Value::Null),
+         "number" => ("brigadier:double", Value::Null),
+         "boolean" => ("brigadier:bool", Value::Null),
+@@ -104,8 +107,10 @@ fn usage_nodes(usage: &str) -> Result<Vec<(String, Value, bool)>, String> {
+             if optional_seen {
+                 return Err(format!("`{usage}`: `{word}` follows an optional argument"));
+             }
+-            let literal = !word.is_empty()
+-                && word
++            // A leading `/` is a plugin's WorldEdit-style `//set`.
++            let bare = word.strip_prefix('/').unwrap_or(word);
++            let literal = !bare.is_empty()
++                && bare
+                     .chars()
+                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c));
+             if !literal {
+@@ -124,11 +129,14 @@ fn usage_nodes(usage: &str) -> Result<Vec<(String, Value, bool)>, String> {
+             return Err(format!("`{usage}`: unknown kind `{kind}`"));
+         };
+         optional_seen |= optional;
+-        greedy_seen |= kind == "text";
++        greedy_seen |= kind == "text" || kind == "suggested";
+         let mut node = json!({"type": "argument", "parser": parser});
+         if !properties.is_null() {
+             node["properties"] = properties;
+         }
++        if kind == "suggested" {
++            node["suggestions"] = "minecraft:ask_server".into();
++        }
+         out.push((name.to_owned(), node, optional));
+     }
+     if out.first().is_none_or(|n| n.1["type"] != "literal") {
+@@ -572,6 +580,7 @@ impl Game<'_> {
+         }
+         let mut commands = Vec::new();
+         self.native_register_commands(&mut commands);
++        Self::plugins_commands(&mut commands);
+         let (tree, levels, problems) =
+             command_tree(&commands, |name| host.hub.vanilla_command(name));
+         for p in problems {
+@@ -611,6 +620,9 @@ impl Game<'_> {
+         };
+         let mut ran = false;
+         self.native_perform_command(&player, line, &mut ran);
++        if !ran {
++            ran = self.plugins_perform_command(&player, line);
++        }
+         if !ran {
+             // Registered, but no mod took it: vanilla's unknown command.
+             self.native_feedback(
+diff --git a/crates/horizon-client/src/game/plugins.rs b/crates/horizon-client/src/game/plugins.rs
+new file mode 100644
+index 0000000..5ccdb66
+--- /dev/null
++++ b/crates/horizon-client/src/game/plugins.rs
+@@ -0,0 +1,944 @@
++//! Server plugins (docs/plugins.md): a dedicated server loads the plugin
++//! libraries in `plugins/` with `horizon-plugin-host` when its world is
++//! ready, and hands them what the native hook points hear, at the same
++//! places: breaking and placing blocks, right clicks, buckets, attacks,
++//! explosions, fluids and fire, pistons, plugin menus, chat, commands and
++//! the server tick. Single player and LAN worlds load no plugins.
++//!
++//! Inside a player's action the game holds that player's state, and the
++//! other players can be out of reach (`self.lan` is taken): lines for them
++//! wait for the next tick here, and console commands in the host.
++
++use super::{
++    Game, LevelDimension,
++    native_lifecycle::NativeLifecycleContext,
++    native_server::{NativeCommand, NativeServerPlayer},
++};
++use horizon_client::{
++    items::ItemStack as GameStack,
++    lan::{data::component_nbt, hub::PluginChat},
++    text::Text,
++};
++use horizon_core::position::BlockPos as GamePos;
++use horizon_plugin_api::Value;
++use horizon_plugin_api::types::{
++    Block, BlockFace, BlockPos, CommandSender, Entity, GameMode, ItemStack, Location, Menu, Player,
++    Uuid, Wire, worlds,
++};
++use horizon_plugin_host::{Backend, PluginHost};
++use horizon_protocol::packets::play::{self, Clientbound as C};
++use horizon_world::registry::BlockStateId;
++use std::cell::RefCell;
++
++/// Chat's format before plugins change it: `<name> message`.
++const CHAT_FORMAT: &str = "<%1$s> %2$s";
++
++#[derive(Default)]
++struct State {
++    /// The players as of the last time the hub was at hand.
++    players: Vec<Player>,
++    /// Lines for players out of reach, sent at the next tick.
++    tells: Vec<(Uuid, String)>,
++    broadcasts: Vec<String>,
++    /// Chat the hub held back for plugins (`Hub::plugin_chat`).
++    chats: Vec<PluginChat>,
++    /// The tick's context while plugins run in it, to read blocks.
++    context: Option<NativeLifecycleContext>,
++    tick: i64,
++}
++
++thread_local! {
++    /// The server thread's plugins; None outside a dedicated server.
++    static PLUGINS: RefCell<Option<PluginHost>> = const { RefCell::new(None) };
++    static STATE: RefCell<State> = RefCell::new(State::default());
++}
++
++fn host() -> Option<PluginHost> {
++    PLUGINS.with(|p| p.borrow().clone())
++}
++
++fn player_of(p: &NativeServerPlayer) -> Player {
++    Player {
++        uuid: Uuid(p.uuid),
++        name: p.name.clone(),
++        location: Location::new(&p.dimension, p.position[0], p.position[1], p.position[2]),
++        game_mode: GameMode::from_id(p.game_mode),
++        health: p.health,
++        op_level: p.permission,
++    }
++}
++
++fn stack_of(s: &GameStack) -> ItemStack {
++    ItemStack {
++        kind: s.item.to_string(),
++        amount: s.count,
++        name: s.extra.as_ref().and_then(|e| e.custom_name_plain()),
++        lore: Vec::new(),
++    }
++}
++
++/// A plugin's stack as the game's: its name and lore as text components.
++fn game_stack(i: &ItemStack) -> GameStack {
++    let mut data = horizon_client::item_data::StackData::default();
++    if let Some(name) = &i.name {
++        data.custom_name = Some(component_nbt(&Text::legacy(name).component()));
++    }
++    if !i.lore.is_empty() {
++        let lines = i
++            .lore
++            .iter()
++            .map(|l| component_nbt(&Text::legacy(l).component()))
++            .collect();
++        data.other.push((
++            "minecraft:lore".to_owned(),
++            horizon_world::nbt::Tag::List(lines),
++        ));
++    }
++    let plain = i.name.is_none() && i.lore.is_empty();
++    GameStack {
++        item: horizon_plugin_api::types::namespaced(&i.kind).into(),
++        count: i.amount.clamp(1, 99),
++        damage: 0,
++        extra: (!plain).then(|| Box::new(data)),
++    }
++}
++
++fn world_of(d: LevelDimension) -> &'static str {
++    match d {
++        LevelDimension::Overworld => worlds::OVERWORLD,
++        LevelDimension::Nether => worlds::NETHER,
++        LevelDimension::End => worlds::END,
++    }
++}
++
++fn pos_of(world: &str, p: [i32; 3]) -> BlockPos {
++    BlockPos::new(world, p[0], p[1], p[2])
++}
++
++fn game_pos(world: &str, p: GamePos) -> BlockPos {
++    BlockPos::new(world, p.x, p.y, p.z)
++}
++
++fn system_chat(text: &Text) -> C {
++    C::SystemChat(play::SystemChat {
++        content: component_nbt(&text.component()),
++        overlay: false,
++    })
++}
++
++/// The game, as plugins reach it.
++struct GameBackend<'a, 'g> {
++    game: &'a mut Game<'g>,
++}
++
++impl Backend for GameBackend<'_, '_> {
++    fn players(&self) -> Vec<Player> {
++        if let Some(lan) = &self.game.lan {
++            let now: Vec<Player> = self
++                .game
++                .native_server_players()
++                .iter()
++                .map(|n| {
++                    let mut p = player_of(n);
++                    if let Some(g) = lan.hub.guests.iter().find(|g| g.uuid == n.uuid) {
++                        p.location = p.location.with_rotation(g.yaw, g.pitch);
++                    }
++                    p
++                })
++                .collect();
++            STATE.with(|s| s.borrow_mut().players = now.clone());
++            return now;
++        }
++        let mut players = STATE.with(|s| s.borrow().players.clone());
++        if let Some(acting) = self.acting_player()
++            && let Some(p) = players.iter_mut().find(|p| p.uuid == acting.uuid)
++        {
++            *p = acting;
++        }
++        players
++    }
++    fn acting_player(&self) -> Option<Player> {
++        let mut p = player_of(&self.game.native_acting_player()?);
++        p.location = p.location.with_rotation(self.game.yaw, self.game.pitch);
++        Some(p)
++    }
++    fn entities(&self, world: &str, kind: Option<&str>) -> Vec<Entity> {
++        if world != self.game.dim.id() {
++            return Vec::new();
++        }
++        self.game
++            .mobs
++            .iter()
++            .filter(|m| m.alive() && kind.is_none_or(|k| k == m.kind.id))
++            .map(|m| Entity {
++                id: m.id as i32,
++                kind: m.kind.id.to_string(),
++                location: Location::new(world, m.position.x, m.position.y, m.position.z)
++                    .with_rotation(m.yaw, 0.0),
++            })
++            .collect()
++    }
++    fn tell(&mut self, uuid: Uuid, message: &str) -> bool {
++        let text = Text::legacy(message);
++        if self.game.lan_acting_uuid == Some(uuid.0) {
++            self.game.guest_packets.push(system_chat(&text));
++            return true;
++        }
++        if self.game.lan.is_some() {
++            return self.game.native_tell(uuid.0, text);
++        }
++        STATE.with(|s| s.borrow_mut().tells.push((uuid, message.to_owned())));
++        true
++    }
++    fn broadcast(&mut self, message: &str) -> usize {
++        let n = self.players().len();
++        if self.game.lan.is_some() {
++            self.game.native_broadcast(Text::legacy(message));
++        } else {
++            STATE.with(|s| s.borrow_mut().broadcasts.push(message.to_owned()));
++        }
++        n
++    }
++    fn action_bar(&mut self, uuid: Uuid, message: &str) -> bool {
++        self.game.native_action_bar(uuid.0, Text::legacy(message))
++    }
++    fn can_run_commands(&self) -> bool {
++        self.game.lan_acting.is_none() && self.game.lan.is_some()
++    }
++    fn console_command(&mut self, line: &str) -> bool {
++        self.game.native_run_command(line)
++    }
++    fn block(&self, pos: &BlockPos) -> Option<Block> {
++        let at = [pos.x, pos.y, pos.z];
++        if let Some(context) = STATE.with(|s| s.borrow().context) {
++            let b = self
++                .game
++                .native_server_block(&context, &pos.world, at)
++                .ok()?;
++            return Some(Block {
++                pos: pos.clone(),
++                kind: b.name,
++                properties: b.properties.into_iter().collect(),
++            });
++        }
++        // Inside a player's action: the level they are in.
++        if pos.world != self.game.dim.id() {
++            return None;
++        }
++        let state = self.game.world.block(at[0], at[1], at[2]);
++        let properties = self
++            .game
++            .pack
++            .assets
++            .registry
++            .state(state)
++            .map(|s| {
++                s.properties
++                    .iter()
++                    .map(|(k, v)| (k.clone(), v.clone()))
++                    .collect()
++            })
++            .unwrap_or_default();
++        Some(Block {
++            pos: pos.clone(),
++            kind: self.game.native_block(at),
++            properties,
++        })
++    }
++    fn held_item(&self) -> Option<ItemStack> {
++        let s = self.game.inventory.get(self.game.selected)?.as_ref()?;
++        Some(stack_of(s))
++    }
++    fn count_items(&mut self, item: &str) -> u32 {
++        self.game.native_count_items(item)
++    }
++    fn take_items(&mut self, item: &str, count: u32) -> u32 {
++        self.game.native_take_items(item, count)
++    }
++    fn give_items(&mut self, item: &str, count: u32) -> u32 {
++        self.game.native_give_items(item, count)
++    }
++    fn inventory(&self, uuid: Uuid) -> Option<Vec<Option<ItemStack>>> {
++        let stacks = self.game.native_player_stacks(uuid.0)?;
++        Some(stacks.iter().map(|s| s.as_ref().map(stack_of)).collect())
++    }
++    fn open_menu(&mut self, uuid: Uuid, menu: &Menu) -> Option<i32> {
++        let items = menu
++            .items
++            .iter()
++            .map(|i| i.as_ref().map(game_stack))
++            .collect();
++        self.game
++            .native_open_menu(uuid.0, menu.rows, Text::legacy(&menu.title), items)
++    }
++    fn set_menu_items(&mut self, uuid: Uuid, items: &[Option<ItemStack>]) {
++        let items = items.iter().map(|i| i.as_ref().map(game_stack)).collect();
++        self.game.native_set_menu_items(uuid.0, items);
++    }
++    fn close_menu(&mut self, uuid: Uuid) {
++        self.game.native_close_menu(uuid.0);
++    }
++    fn log(&mut self, level: &str, line: &str) {
++        super::dedicated::log(level, line);
++    }
++}
++
++/// Plugins reached from a level's own rules (fluids, fire, pistons), where
++/// the game itself is out of reach: lines wait for the next tick.
++struct Detached;
++
++impl Backend for Detached {
++    fn players(&self) -> Vec<Player> {
++        STATE.with(|s| s.borrow().players.clone())
++    }
++    fn acting_player(&self) -> Option<Player> {
++        None
++    }
++    fn tell(&mut self, uuid: Uuid, message: &str) -> bool {
++        STATE.with(|s| s.borrow_mut().tells.push((uuid, message.to_owned())));
++        true
++    }
++    fn broadcast(&mut self, message: &str) -> usize {
++        STATE.with(|s| {
++            let mut s = s.borrow_mut();
++            s.broadcasts.push(message.to_owned());
++            s.players.len()
++        })
++    }
++    fn action_bar(&mut self, _: Uuid, _: &str) -> bool {
++        false
++    }
++    fn can_run_commands(&self) -> bool {
++        false
++    }
++    fn console_command(&mut self, _: &str) -> bool {
++        false
++    }
++    fn block(&self, _: &BlockPos) -> Option<Block> {
++        None
++    }
++    fn held_item(&self) -> Option<ItemStack> {
++        None
++    }
++    fn count_items(&mut self, _: &str) -> u32 {
++        0
++    }
++    fn take_items(&mut self, _: &str, _: u32) -> u32 {
++        0
++    }
++    fn give_items(&mut self, _: &str, _: u32) -> u32 {
++        0
++    }
++    fn inventory(&self, _: Uuid) -> Option<Vec<Option<ItemStack>>> {
++        None
++    }
++    fn open_menu(&mut self, _: Uuid, _: &Menu) -> Option<i32> {
++        None
++    }
++    fn set_menu_items(&mut self, _: Uuid, _: &[Option<ItemStack>]) {}
++    fn close_menu(&mut self, _: Uuid) {}
++    fn log(&mut self, level: &str, line: &str) {
++        super::dedicated::log(level, line);
++    }
++}
++
++impl Game<'_> {
++    /// Fires `event` from a player's action: whether a plugin cancelled it.
++    fn plugins_fire(
++        &mut self,
++        event: &str,
++        data: impl FnOnce(&Self, Value) -> Value,
++    ) -> (Value, bool) {
++        let Some(host) = host() else {
++            return (Value::Null, false);
++        };
++        if !host.listens(event) {
++            return (Value::Null, false);
++        }
++        let Some(player) = self.native_acting_player() else {
++            return (Value::Null, false);
++        };
++        let base = Value::map().with("player", player_of(&player).to_wire());
++        let data = data(self, base);
++        host.fire(&mut GameBackend { game: self }, event, data)
++    }
++
++    /// The acting player's world.
++    fn plugins_world(&self) -> &'static str {
++        self.dim.id()
++    }
++
++    /// Loads and enables `plugins/` on a dedicated server whose world is
++    /// ready, before its first tick (so their commands are in the tree).
++    pub(super) fn plugins_start(&mut self) {
++        if self.options.dedicated.is_none() || host().is_some() {
++            return;
++        }
++        let dir = std::env::current_dir().unwrap_or_default().join("plugins");
++        if let Err(e) = std::fs::create_dir_all(&dir) {
++            super::dedicated::log("WARN", &format!("[Plugins] {}: {e}", dir.display()));
++        }
++        let host = PluginHost::new(&dir);
++        PLUGINS.with(|p| *p.borrow_mut() = Some(host.clone()));
++        let mut backend = GameBackend { game: self };
++        // Fills the players' cache too.
++        let _ = backend.players();
++        host.load_all(&mut backend);
++        host.enable(&mut backend, None);
++        host.fire(&mut backend, "world_load", Value::map());
++        if let Some(lan) = self.lan.as_mut() {
++            lan.hub.plugin_chat = host.listens("player_chat");
++        }
++        let n = host.plugins().len();
++        if n > 0 {
++            super::dedicated::log("INFO", &format!("[Plugins] {n} plugin(s) enabled"));
++        }
++    }
++
++    /// Disables every plugin as the server stops, before the players are
++    /// saved and kicked.
++    pub(super) fn plugins_stop(&mut self) {
++        let Some(host) = host() else {
++            return;
++        };
++        let mut backend = GameBackend { game: self };
++        host.fire(&mut backend, "world_unload", Value::map());
++        host.disable_all(&mut backend);
++        PLUGINS.with(|p| *p.borrow_mut() = None);
++    }
++
++    /// The server tick's start (`true`) or end, inside the tick hook's read
++    /// scope: what waited for it, the schedulers, the tick events, the
++    /// players' changes, and chat.
++    pub(super) fn plugins_tick(&mut self, context: &NativeLifecycleContext, start: bool) {
++        let Some(host) = host() else {
++            return;
++        };
++        let tick = STATE.with(|s| {
++            let mut s = s.borrow_mut();
++            s.context = Some(*context);
++            if start {
++                s.tick += 1;
++            }
++            s.tick
++        });
++        if start {
++            let (tells, broadcasts) = STATE.with(|s| {
++                let mut s = s.borrow_mut();
++                (
++                    std::mem::take(&mut s.tells),
++                    std::mem::take(&mut s.broadcasts),
++                )
++            });
++            for (uuid, line) in tells {
++                self.native_tell(uuid.0, Text::legacy(&line));
++            }
++            for line in broadcasts {
++                self.native_broadcast(Text::legacy(&line));
++            }
++            if host.take_reload_request() {
++                host.reload(&mut GameBackend { game: self });
++                // The players' command tree is built again at the next
++                // tick, with the plugins' commands as they are now.
++                if let Some(lan) = self.lan.as_mut() {
++                    lan.native_commands = None;
++                }
++            }
++            host.tick_start(&mut GameBackend { game: self }, tick);
++        } else {
++            self.plugins_chat(&host);
++            host.tick_end(&mut GameBackend { game: self }, tick);
++        }
++        if let Some(lan) = self.lan.as_mut() {
++            lan.hub.plugin_chat = host.listens("player_chat");
++            lan.hub.plugin_join_messages = true;
++        }
++        STATE.with(|s| s.borrow_mut().context = None);
++    }
++
++    /// A chat message the hub held back for plugins: their verdict, at the
++    /// tick's end. Unchanged, it goes out as vanilla sends it (signed);
++    /// reformatted, as a system line to everyone.
++    pub(super) fn plugins_hold_chat(&mut self, chat: PluginChat) {
++        STATE.with(|s| s.borrow_mut().chats.push(chat));
++    }
++
++    fn plugins_chat(&mut self, host: &PluginHost) {
++        let chats = STATE.with(|s| std::mem::take(&mut s.borrow_mut().chats));
++        for chat in chats {
++            let player = self
++                .native_server_players()
++                .into_iter()
++                .find(|p| p.uuid == chat.sender);
++            let Some(player) = player else {
++                continue;
++            };
++            let data = Value::map()
++                .with("player", player_of(&player).to_wire())
++                .with("message", &chat.message.content)
++                .with("format", CHAT_FORMAT);
++            let (out, cancelled) = host.fire(&mut GameBackend { game: self }, "player_chat", data);
++            if cancelled {
++                continue;
++            }
++            let text = |k: &str, or: &str| {
++                out.get(k)
++                    .and_then(Value::to_text)
++                    .unwrap_or_else(|| or.to_owned())
++            };
++            let message = text("message", &chat.message.content);
++            let format = text("format", CHAT_FORMAT);
++            if message == chat.message.content && format == CHAT_FORMAT {
++                let mut events = Vec::new();
++                if let Some(lan) = self.lan.as_mut() {
++                    let line = format!("<{}> {}", chat.name, chat.message.content);
++                    lan.hub
++                        .broadcast_chat(&chat.message, &chat.bound, line, &mut events);
++                }
++                for e in events {
++                    self.lan_log_event(e);
++                }
++            } else {
++                let line = format.replace("%1$s", &chat.name).replace("%2$s", &message);
++                self.native_broadcast(Text::legacy(&line));
++            }
++        }
++    }
++
++    /// The commands plugins added, for every player's command tree: each
++    /// takes the rest of the line, which the plugin splits.
++    pub(super) fn plugins_commands(commands: &mut Vec<NativeCommand>) {
++        let Some(host) = host() else {
++            return;
++        };
++        for name in host.command_names() {
++            commands.push(NativeCommand::new(&format!("{name} [args:suggested]")));
++        }
++    }
++
++    /// A player's command (no slash) for a plugin: whether it was one.
++    pub(super) fn plugins_perform_command(
++        &mut self,
++        player: &NativeServerPlayer,
++        line: &str,
++    ) -> bool {
++        let Some(host) = host() else {
++            return false;
++        };
++        let sender = CommandSender::Player(player_of(player));
++        host.command(&mut GameBackend { game: self }, sender, line)
++    }
++
++    /// A console line for a plugin: whether it was one.
++    pub(super) fn plugins_console_command(&mut self, line: &str) -> bool {
++        let Some(host) = host() else {
++            return false;
++        };
++        host.command(
++            &mut GameBackend { game: self },
++            CommandSender::Console,
++            line,
++        )
++    }
++
++    /// `BlockBreakEvent`: whether a plugin cancelled the break.
++    pub(super) fn plugins_destroy_block(&mut self, pos: [i32; 3], state: BlockStateId) -> bool {
++        let world = self.plugins_world();
++        let kind = self.res.facts().get(state).name.to_string();
++        let (_, cancelled) = self.plugins_fire("block_break", |_, d| {
++            d.with(
++                "block",
++                Block {
++                    pos: pos_of(world, pos),
++                    kind,
++                    properties: Vec::new(),
++                }
++                .to_wire(),
++            )
++        });
++        cancelled
++    }
++
++    /// `PlayerInteractEvent` on a block, before the block's own use.
++    pub(super) fn plugins_right_click_block(&mut self, pos: [i32; 3], face: [i32; 3]) -> bool {
++        let world = self.plugins_world();
++        let (_, cancelled) = self.plugins_fire("player_interact", |g, d| {
++            let item = g
++                .inventory
++                .get(g.selected)
++                .and_then(Option::as_ref)
++                .map(stack_of);
++            d.with("action", "right_click_block")
++                .with(
++                    "block",
++                    Block {
++                        pos: pos_of(world, pos),
++                        kind: g.native_block(pos),
++                        properties: Vec::new(),
++                    }
++                    .to_wire(),
++                )
++                .with("face", BlockFace::from_offset(face).to_wire())
++                .with("item", item.to_wire())
++        });
++        cancelled
++    }
++
++    /// `BlockPlaceEvent`, for an item that places a block, before it is
++    /// used on the block: whether a plugin cancelled the placement.
++    pub(super) fn plugins_use_item_on(
++        &mut self,
++        stack: &GameStack,
++        pos: [i32; 3],
++        face: [i32; 3],
++    ) -> bool {
++        if !self
++            .res
++            .items()
++            .get(&stack.item)
++            .is_some_and(|i| i.block.is_some())
++        {
++            return false;
++        }
++        let world = self.plugins_world();
++        let against = pos_of(world, pos);
++        let at = against.offset(face[0], face[1], face[2]);
++        let item = stack_of(stack);
++        let (_, cancelled) = self.plugins_fire("block_place", |_, d| {
++            d.with("block", at.to_wire())
++                .with("against", against.to_wire())
++                .with(
++                    "face",
++                    BlockFace::from_offset(face).unwrap_or_default().to_wire(),
++                )
++                .with("item", item.to_wire())
++        });
++        cancelled
++    }
++
++    /// `PlayerInteractEvent` in the air: the held item's own use.
++    pub(super) fn plugins_use_item(&mut self, stack: &GameStack) -> bool {
++        let item = stack_of(stack);
++        let (_, cancelled) = self.plugins_fire("player_interact", |_, d| {
++            d.with("action", "right_click_air")
++                .with("item", item.to_wire())
++        });
++        cancelled
++    }
++
++    /// `PlayerBucketFillEvent` (an empty bucket) or `PlayerBucketEmptyEvent`.
++    pub(super) fn plugins_fill_bucket(&mut self, stack: &GameStack, pos: [i32; 3]) -> bool {
++        let event = if &*stack.item == "minecraft:bucket" {
++            "player_bucket_fill"
++        } else {
++            "player_bucket_empty"
++        };
++        let world = self.plugins_world();
++        let bucket = stack_of(stack);
++        let (_, cancelled) = self.plugins_fire(event, |_, d| {
++            d.with("block", pos_of(world, pos).to_wire())
++                .with("bucket", bucket.to_wire())
++        });
++        cancelled
++    }
++
++    /// `PrePlayerAttackEntityEvent`.
++    pub(super) fn plugins_attack_entity(&mut self, id: i32, kind: &str, at: [f64; 3]) -> bool {
++        let world = self.plugins_world();
++        let entity = Entity {
++            id,
++            kind: kind.to_owned(),
++            location: Location::new(world, at[0], at[1], at[2]),
++        };
++        let (_, cancelled) = self.plugins_fire("player_attack_entity", |_, d| {
++            d.with("entity", entity.to_wire())
++        });
++        cancelled
++    }
++
++    /// `EntityExplodeEvent`: plugins take out the blocks to spare.
++    pub(super) fn plugins_explosion(
++        &mut self,
++        dimension: &str,
++        center: [f64; 3],
++        blocks: &mut Vec<[i32; 3]>,
++    ) {
++        let Some(host) = host() else {
++            return;
++        };
++        if !host.listens("entity_explode") {
++            return;
++        }
++        let list: Vec<BlockPos> = blocks.iter().map(|b| pos_of(dimension, *b)).collect();
++        let data = Value::map()
++            .with(
++                "location",
++                Location::new(dimension, center[0], center[1], center[2]).to_wire(),
++            )
++            .with("blocks", list.to_wire());
++        let (out, cancelled) = host.fire(&mut GameBackend { game: self }, "entity_explode", data);
++        if cancelled {
++            blocks.clear();
++            return;
++        }
++        if let Some(kept) = out.get("blocks").and_then(Vec::<BlockPos>::from_wire) {
++            blocks.retain(|b| kept.iter().any(|k| [k.x, k.y, k.z] == *b));
++        }
++    }
++
++    /// A guest as plugins see them, from the hub (no state swapped in).
++    fn plugins_guest(host: &horizon_client::lan::hub::Hub, conn: u32) -> Option<Player> {
++        let g = host.guest(conn)?;
++        Some(Player {
++            uuid: Uuid(g.uuid),
++            name: g.name.clone(),
++            location: Location::new(&g.dimension, g.position[0], g.position[1], g.position[2])
++                .with_rotation(g.yaw, g.pitch),
++            game_mode: GameMode::from_id(g.game_mode),
++            health: g.health,
++            op_level: g.permission,
++        })
++    }
++
++    /// `PlayerInteractEvent` for a left click, as a guest starts digging:
++    /// whether a plugin cancelled it (nothing is dug).
++    pub(super) fn plugins_left_click(
++        &mut self,
++        host: &horizon_client::lan::hub::Hub,
++        conn: u32,
++        pos: [i32; 3],
++        face: [i32; 3],
++    ) -> bool {
++        let Some(plugins) = self::host() else {
++            return false;
++        };
++        if !plugins.listens("player_interact") {
++            return false;
++        }
++        let Some(player) = Self::plugins_guest(host, conn) else {
++            return false;
++        };
++        let item = host
++            .guest(conn)
++            .and_then(|g| g.inventory.get(g.selected).cloned().flatten())
++            .map(|s| stack_of(&s));
++        let world = player.location.world.clone();
++        let block = Block {
++            pos: pos_of(&world, pos),
++            kind: if world == self.dim.id() {
++                self.native_block(pos)
++            } else {
++                String::new()
++            },
++            properties: Vec::new(),
++        };
++        let data = Value::map()
++            .with("player", player.to_wire())
++            .with("action", "left_click_block")
++            .with("block", block.to_wire())
++            .with("face", BlockFace::from_offset(face).to_wire())
++            .with("item", item.to_wire());
++        plugins.fire(&mut GameBackend { game: self }, "player_interact", data).1
++    }
++
++    /// `PlayerJoinEvent` as a guest is placed: what everyone is told.
++    pub(super) fn plugins_joined(&mut self, host: &mut super::lan::LanHost, conn: u32) {
++        let Some(plugins) = self::host() else {
++            return;
++        };
++        let Some(player) = Self::plugins_guest(&host.hub, conn) else {
++            return;
++        };
++        let vanilla = format!("§e{} joined the game", player.name);
++        let said = plugins.player_joined(&mut GameBackend { game: self }, &player, &vanilla);
++        let line = match said {
++            None => return,
++            Some(s) if s == vanilla => {
++                let who = self.player_text(&player.name, player.uuid.0);
++                Text::translate("multiplayer.player.joined", &[who]).with_color(horizon_client::text::YELLOW)
++            }
++            Some(s) => Text::legacy(&s),
++        };
++        host.hub.system_message(component_nbt(&line.component()));
++    }
++
++    /// `PlayerQuitEvent` once a guest left: what everyone is told.
++    pub(super) fn plugins_left(&mut self, host: &mut super::lan::LanHost, guest: &horizon_client::lan::guest::Guest) {
++        let Some(plugins) = self::host() else {
++            return;
++        };
++        let player = Player {
++            uuid: Uuid(guest.uuid),
++            name: guest.name.clone(),
++            location: Location::new(&guest.dimension, guest.position[0], guest.position[1], guest.position[2]),
++            game_mode: GameMode::from_id(guest.game_mode),
++            health: guest.health,
++            op_level: guest.permission,
++        };
++        let vanilla = format!("§e{} left the game", player.name);
++        let said = plugins.player_left(&mut GameBackend { game: self }, &player, &vanilla);
++        let line = match said {
++            None => return,
++            Some(s) if s == vanilla => {
++                let who = self.player_text(&player.name, player.uuid.0);
++                Text::translate("multiplayer.player.left", &[who]).with_color(horizon_client::text::YELLOW)
++            }
++            Some(s) => Text::legacy(&s),
++        };
++        host.hub.system_message(component_nbt(&line.component()));
++    }
++
++    /// What a guest's plugin command completes to: the start (a byte offset
++    /// in `command`) and the words; None for a command no plugin has.
++    pub(super) fn plugins_suggestions(
++        &mut self,
++        host: &horizon_client::lan::hub::Hub,
++        conn: u32,
++        command: &str,
++    ) -> Option<(usize, Vec<String>)> {
++        let plugins = self::host()?;
++        if !plugins.has_command(command) || !command.contains(' ') {
++            return None;
++        }
++        let player = Self::plugins_guest(host, conn)?;
++        plugins.complete(&mut GameBackend { game: self }, CommandSender::Player(player), command)
++    }
++
++    /// `EntitySpawnEvent`: whether a plugin stopped `kind` coming at `at`.
++    pub(super) fn plugins_entity_spawn(&mut self, id: u32, kind: &str, at: [f64; 3]) -> bool {
++        let Some(plugins) = self::host() else {
++            return false;
++        };
++        if !plugins.listens("entity_spawn") {
++            return false;
++        }
++        let entity = Entity {
++            id: id as i32,
++            kind: kind.to_owned(),
++            location: Location::new(self.dim.id(), at[0], at[1], at[2]),
++        };
++        let data = Value::map().with("entity", entity.to_wire());
++        plugins.fire(&mut GameBackend { game: self }, "entity_spawn", data).1
++    }
++
++    /// `EntityDeathEvent`.
++    pub(super) fn plugins_entity_death(&mut self, id: u32, kind: &str, at: [f64; 3]) {
++        let Some(plugins) = self::host() else {
++            return;
++        };
++        if !plugins.listens("entity_death") {
++            return;
++        }
++        let entity = Entity {
++            id: id as i32,
++            kind: kind.to_owned(),
++            location: Location::new(self.dim.id(), at[0], at[1], at[2]),
++        };
++        let data = Value::map().with("entity", entity.to_wire());
++        plugins.fire(&mut GameBackend { game: self }, "entity_death", data);
++    }
++
++    /// `InventoryClickEvent` in a menu a plugin (or a native mod) opened.
++    pub(super) fn plugins_menu_clicked(
++        &mut self,
++        uuid: u128,
++        window: i32,
++        slot: i32,
++        button: i32,
++        mode: i32,
++    ) {
++        self.plugins_menu_event(uuid, "inventory_click", |d| {
++            d.with("window", window)
++                .with("slot", slot)
++                .with("button", button)
++                .with("mode", mode)
++        });
++    }
++
++    pub(super) fn plugins_menu_closed(&mut self, uuid: u128, window: i32) {
++        self.plugins_menu_event(uuid, "inventory_close", |d| d.with("window", window));
++    }
++
++    fn plugins_menu_event(&mut self, uuid: u128, event: &str, data: impl FnOnce(Value) -> Value) {
++        let Some(host) = host() else {
++            return;
++        };
++        if !host.listens(event) {
++            return;
++        }
++        let mut backend = GameBackend { game: self };
++        let Some(player) = backend.players().into_iter().find(|p| p.uuid.0 == uuid) else {
++            return;
++        };
++        host.fire(
++            &mut backend,
++            event,
++            data(Value::map().with("player", player.to_wire())),
++        );
++    }
++}
++
++/// A level's own rules, reaching plugins (`GameLevel` holds no `Game`).
++pub(super) fn plugins_block_spread(
++    dimension: LevelDimension,
++    kind: &str,
++    from: GamePos,
++    to: GamePos,
++) -> bool {
++    let Some(host) = host() else {
++        return false;
++    };
++    let world = world_of(dimension);
++    let (event, data) = if kind == "fluid" {
++        (
++            "block_from_to",
++            Value::map()
++                .with("block", game_pos(world, from).to_wire())
++                .with("to", game_pos(world, to).to_wire()),
++        )
++    } else {
++        (
++            "block_spread",
++            Value::map()
++                .with("source", game_pos(world, from).to_wire())
++                .with("block", game_pos(world, to).to_wire()),
++        )
++    };
++    if !host.listens(event) {
++        return false;
++    }
++    host.fire(&mut Detached, event, data).1
++}
++
++pub(super) fn plugins_piston_move(
++    dimension: LevelDimension,
++    piston: GamePos,
++    direction: [i32; 3],
++    push: &[GamePos],
++    destroy: &[GamePos],
++) -> bool {
++    let Some(host) = host() else {
++        return false;
++    };
++    if !host.listens("block_piston") {
++        return false;
++    }
++    let world = world_of(dimension);
++    let list = |l: &[GamePos]| {
++        l.iter()
++            .map(|p| game_pos(world, *p))
++            .collect::<Vec<_>>()
++            .to_wire()
++    };
++    let data = Value::map()
++        .with("piston", game_pos(world, piston).to_wire())
++        .with(
++            "direction",
++            BlockFace::from_offset(direction)
++                .unwrap_or_default()
++                .to_wire(),
++        )
++        .with("blocks", list(push))
++        .with("destroyed", list(destroy));
++    host.fire(&mut Detached, "block_piston", data).1
++}
+diff --git a/crates/horizon-client/src/lan/commands.rs b/crates/horizon-client/src/lan/commands.rs
+index 5daad29..acd5fb6 100644
+--- a/crates/horizon-client/src/lan/commands.rs
++++ b/crates/horizon-client/src/lan/commands.rs
+@@ -242,7 +242,10 @@ fn fill(
+                 )
+             }),
+             suggestions: if argument {
+-                suggestions.get(path.join(" ").as_str()).copied()
++                suggestions.get(path.join(" ").as_str()).copied().or_else(|| {
++                    // A server mod's or plugin's own completions.
++                    (child["suggestions"] == "minecraft:ask_server").then_some("minecraft:ask_server")
++                })
+             } else {
+                 None
+             },
+diff --git a/crates/horizon-client/src/lan/hub.rs b/crates/horizon-client/src/lan/hub.rs
+index b1db5b0..1d01a18 100644
+--- a/crates/horizon-client/src/lan/hub.rs
++++ b/crates/horizon-client/src/lan/hub.rs
+@@ -171,15 +171,33 @@ pub enum HostEvent {
+         sender: u128,
+         text: String,
+     },
++    /// A chat message held back for the server's plugins (`Hub::plugin_chat`),
++    /// not yet broadcast: the game hears their verdict and sends it.
++    PluginChat(Box<PluginChat>),
+     /// A server log warning (ServerGamePacketListenerImpl's LOGGER.warn).
+     Warn(String),
+     /// A server log error (LOGGER.error).
+     Error(String),
+ }
+ 
++/// A player's chat message as the hub would have broadcast it, for the
++/// server's plugins to cancel or change first (`AsyncPlayerChatEvent`).
++pub struct PluginChat {
++    pub sender: u128,
++    pub name: String,
++    pub message: chat::ChatMessage,
++    pub bound: horizon_protocol::packets::play::ChatTypeBound,
++}
++
+ pub struct Hub {
+     /// Clicks on and closings of native mods' menus, for the game.
+     pub native_menu_events: Vec<super::menu::NativeMenuEvent>,
++    /// The server's plugins listen to chat: players' messages go to the
++    /// game as `HostEvent::PluginChat` instead of out to everyone.
++    pub plugin_chat: bool,
++    /// The server's plugins say who joins and leaves (`PlayerJoinEvent`'s
++    /// message): the game sends those lines instead.
++    pub plugin_join_messages: bool,
+     pub lan: Lan,
+     pub config: HubConfig,
+     pub encoder: ChunkEncoder,
+@@ -423,6 +441,8 @@ impl Hub {
+             entity_out: Vec::new(),
+             mod_commands: (serde_json::Value::Null, None),
+             native_menu_events: Vec::new(),
++            plugin_chat: false,
++            plugin_join_messages: false,
+             teams: Vec::new(),
+         }
+     }
+@@ -806,17 +826,20 @@ impl Hub {
+         // PlayerList.sendPlayerPermissionLevel, then the recipe book.
+         self.send_permission_level(i);
+         self.send_initial_recipe_book(i);
+-        // The others hear of the newcomer before it joins the list.
+-        self.broadcast_except(
+-            conn,
+-            &C::SystemChat(play::SystemChat {
+-                content: yellow_names(
+-                    "multiplayer.player.joined",
+-                    vec![display_name(self.guests[i].uuid, &name)],
+-                ),
+-                overlay: false,
+-            }),
+-        );
++        // The others hear of the newcomer before it joins the list (unless
++        // the server's plugins say it).
++        if !self.plugin_join_messages {
++            self.broadcast_except(
++                conn,
++                &C::SystemChat(play::SystemChat {
++                    content: yellow_names(
++                        "multiplayer.player.joined",
++                        vec![display_name(self.guests[i].uuid, &name)],
++                    ),
++                    overlay: false,
++                }),
++            );
++        }
+         self.guests[i].placed = true;
+         self.resend_teleport(i, None);
+         let g = &self.guests[i];
+@@ -1419,10 +1442,12 @@ impl Hub {
+         self.broadcast(&C::RemoveEntities(play::RemoveEntities {
+             ids: vec![g.entity_id],
+         }));
+-        self.system_message(yellow_names(
+-            "multiplayer.player.left",
+-            vec![display_name(g.uuid, &g.name)],
+-        ));
++        if !self.plugin_join_messages {
++            self.system_message(yellow_names(
++                "multiplayer.player.left",
++                vec![display_name(g.uuid, &g.name)],
++            ));
++        }
+         g
+     }
+ 
+diff --git a/crates/horizon-client/src/lan/hub/chat.rs b/crates/horizon-client/src/lan/hub/chat.rs
+index 591c0df..d945743 100644
+--- a/crates/horizon-client/src/lan/hub/chat.rs
++++ b/crates/horizon-client/src/lan/hub/chat.rs
+@@ -217,6 +217,20 @@ impl Hub {
+             name: self.player_display_name(uuid, &name),
+             target: None,
+         };
++        if self.plugin_chat {
++            // The plugins decide first; the game broadcasts what they leave.
++            events.push(HostEvent::PlayerChat {
++                sender: uuid,
++                text: message.content.clone(),
++            });
++            events.push(HostEvent::PluginChat(Box::new(super::PluginChat {
++                sender: uuid,
++                name,
++                message,
++                bound,
++            })));
++            return;
++        }
+         let line = format!("<{name}> {}", message.content);
+         self.broadcast_chat(&message, &bound, line, events);
+         events.push(HostEvent::PlayerChat {
+diff --git a/crates/horizon-server/src/backup.rs b/crates/horizon-server/src/backup.rs
+index c446d56..3957086 100644
+--- a/crates/horizon-server/src/backup.rs
++++ b/crates/horizon-server/src/backup.rs
+@@ -1,5 +1,5 @@
+ //! Backups and restore (docs/server.md, section 7). A backup is one zip in `backups/`: the world folder and
+-//! the server's settings and lists. On a running server the game first saves everything and stops writing
++//! the server's settings and lists, and the plugins' data (`plugins/`, without the plugin libraries). On a running server the game first saves everything and stops writing
+ //! (`save-off`, `save-all`), and writes again once the zip is done (`save-on`), so players stay online.
+ //! A restore puts the backup's world in place of the current one, which is moved aside, never deleted.
+ 
+@@ -56,7 +56,12 @@ pub fn file_name(time: SystemTime, name: Option<&str>) -> Result<String, String>
+     Ok(format!("{}-{name}.zip", stamp(time)))
+ }
+ 
+-/// Adds a folder to the zip, under `prefix`, skipping the game's session lock.
++/// A plugin library (docs/plugins.md): backups keep plugins' data, not their code.
++fn is_library(name: &str) -> bool {
++    [".so", ".dll", ".dylib"].iter().any(|x| name.ends_with(x))
++}
++
++/// Adds a folder to the zip, under `prefix`, skipping the game's session lock and plugin libraries.
+ fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Result<(), String> {
+     let options = SimpleFileOptions::default()
+         .compression_method(CompressionMethod::Deflated)
+@@ -72,7 +77,7 @@ fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Re
+         let inner = format!("{prefix}/{name}");
+         if path.is_dir() {
+             add_dir(zip, &path, &inner)?;
+-        } else if name != "session.lock" {
++        } else if name != "session.lock" && !is_library(&name) {
+             zip.start_file(inner.as_str(), options)
+                 .map_err(|e| e.to_string())?;
+             let mut file = File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+@@ -96,6 +101,10 @@ pub fn create(dir: &Path, config: &Config, file_name: &str) -> Result<PathBuf, S
+         if world.is_dir() {
+             add_dir(&mut zip, &world, &config.world.name)?;
+         }
++        let plugins = dir.join("plugins");
++        if plugins.is_dir() {
++            add_dir(&mut zip, &plugins, "plugins")?;
++        }
+         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+         for name in FILES {
+             if let Ok(bytes) = std::fs::read(dir.join(name)) {
