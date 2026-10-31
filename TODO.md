@@ -30,8 +30,8 @@ What is left to do, most important first in each section.
 
 ## New plugins and tools
 
-- [ ] A converter for Paper plugins: start by scoping it (translating `plugin.yml`, then a guide or a Rust
-      skeleton from a `.jar`'s classes).
+- [x] A converter for Paper plugins: [paper2horizon](https://github.com/JoaoVictorCoder/paper2horizon) turns a
+      jar into a crate of this API, with what's left to port marked. Next there: translating simple method bodies.
 - [ ] A plugin template (`cargo generate` or a template repository).
 - [ ] Publish `horizon-plugin-api` on crates.io, so plugins don't need a `git` dependency.
 

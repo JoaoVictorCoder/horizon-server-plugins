@@ -32,7 +32,9 @@ Made one? Open an issue or a pull request to list it here.
 Full API documentation: [docs/plugins.md](docs/plugins.md).
 
 Paper `.jar` files do **not** run here: they are Java bytecode written against Bukkit's classes. A Paper plugin
-ports to this API almost line for line (see the table in `docs/plugins.md`).
+ports to this API almost line for line (see the table in `docs/plugins.md`), and
+[paper2horizon](https://github.com/JoaoVictorCoder/paper2horizon) starts the port from the plugin's jar: it writes
+the crate with each listener, command and task in place and what the Java code called beside each.
 
 ## Roadmap
 
@@ -40,7 +42,6 @@ Next up (the full list: [TODO.md](TODO.md)):
 
 - An automatic end-to-end test: a server, a bot and a plugin.
 - More of the API: chunk events, block states, block entity data (chest contents), entities by handle.
-- A converter that helps port Paper plugins to this API.
 - GitHub releases with built servers and plugins, and CI.
 
 ## Building the server
