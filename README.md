@@ -18,8 +18,13 @@ A **Minecraft: Java Edition 26.3** server in Rust with **Paper-style plugins**, 
 - **Example plugins** (`api/examples/`):
   - **Homes**: `/sethome`, `/home`, `/delhome`, `/homes` (a menu), spawn protection.
   - **Dragão**: `/dragao [colour]` (or `/dragon`) builds a little dragon out of blocks.
-  - **HorizonEdit**: WorldEdit's commands (`//wand`, `//set`, `//replace`, `//copy`, `//paste`, `//rotate`,
-    `//undo`, `//sphere`, `//stack`...), written from scratch.
+  - **HorizonEdit**: most of WorldEdit's commands, written from scratch (no WorldEdit code): the wand,
+    `//hpos1`, `//chunk`, `//set`, `//replace`, `//overlay`, `//naturalize`, `//smooth`, `//hollow`, `//line`,
+    `//forest`, `//sphere`, `//cyl`, `//pyramid`, `//generate` (expressions), `//copy`/`//paste`/`//rotate`/
+    `//flip`, schematics (`//schem save|load`), `//undo`/`//redo`, `//fill`, `//drain`, `//snow`, `//butcher`,
+    `//calc`, `/ascend`, `/jumpto`, `/thru`, brushes (`/brush sphere|cylinder|smooth|clipboard`), tools
+    (`/tool tree|repl|info`), the super pickaxe (`/sp`), masks (`//gmask`) and `//limit`. `//help` lists them.
+    Not there: `//regen`, biomes and snapshots, which need more of the engine than plugins reach.
 
 Full API documentation: [docs/plugins.md](docs/plugins.md).
 
