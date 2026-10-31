@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horizon Server Plugins</title>
+<meta name="description" content="A Minecraft: Java Edition 26.3 server in Rust with Paper-style plugins: events, commands, permissions, configs and hot reload.">
+<meta property="og:title" content="Horizon Server Plugins">
+<meta property="og:description" content="Write Minecraft server plugins in Rust, Paper-style, with hot reload.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23866043'/%3E%3Crect width='8' height='3' fill='%235d9c3a'/%3E%3Crect x='1' y='3' width='1' height='1' fill='%235d9c3a'/%3E%3Crect x='5' y='3' width='2' height='1' fill='%235d9c3a'/%3E%3Crect x='3' y='5' width='1' height='1' fill='%23a07a55'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f4ef;
+  --bg-alt: #ece8df;
+  --surface: #ffffff;
+  --text: #1d1b16;
+  --muted: #5d584c;
+  --border: #d9d3c4;
+  --accent: #3f7d23;
+  --accent-strong: #2f6118;
+  --accent-text: #ffffff;
+  --rust: #b7410e;
+  --code-bg: #1c1d21;
+  --code-text: #e6e3da;
+  --c-kw: #f08d49;
+  --c-ty: #7ec699;
+  --c-str: #e6c07b;
+  --c-cm: #8a8f98;
+  --c-mac: #c792ea;
+  --shadow: 0 1px 2px rgb(0 0 0 / .06), 0 8px 24px rgb(0 0 0 / .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111210;
+    --bg-alt: #181a16;
+    --surface: #1c1f1a;
+    --text: #ecebe6;
+    --muted: #a6a394;
+    --border: #2e322a;
+    --accent: #6cbf3f;
+    --accent-strong: #84d65a;
+    --accent-text: #0d1409;
+    --rust: #f0743a;
+    --code-bg: #0b0c0b;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111210;
+  --bg-alt: #181a16;
+  --surface: #1c1f1a;
+  --text: #ecebe6;
+  --muted: #a6a394;
+  --border: #2e322a;
+  --accent: #6cbf3f;
+  --accent-strong: #84d65a;
+  --accent-text: #0d1409;
+  --rust: #f0743a;
+  --code-bg: #0b0c0b;
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px rgb(0 0 0 / .3);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent-strong); }
+code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; }
+:not(pre) > code {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .05em .35em;
+  font-size: .88em;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+
+/* nav */
+nav {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+nav .wrap { display: flex; align-items: center; gap: 24px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--text); text-decoration: none; letter-spacing: -.01em; }
+.brand-block { width: 22px; height: 22px; image-rendering: pixelated; }
+nav .links { display: flex; gap: 20px; margin-left: auto; align-items: center; }
+nav .links a { color: var(--muted); text-decoration: none; font-size: .92rem; font-weight: 500; }
+nav .links a:hover { color: var(--text); }
+@media (max-width: 640px) { nav .links a.opt { display: none; } }
+
+/* buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 11px 18px; border-radius: 8px;
+  font-weight: 700; font-size: .95rem; text-decoration: none;
+  border: 1px solid transparent; transition: transform .08s, background .15s;
+}
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: var(--accent); color: var(--accent-text); box-shadow: inset 0 -3px 0 rgb(0 0 0 / .2); }
+.btn-primary:hover { background: var(--accent-strong); }
+.btn-ghost { border-color: var(--border); color: var(--text); background: var(--surface); }
+.btn-ghost:hover { border-color: var(--muted); }
+.btn svg { width: 18px; height: 18px; fill: currentColor; }
+
+/* hero */
+.hero { padding: 72px 0 56px; }
+.hero .wrap { display: grid; grid-template-columns: 1fr 1.05fr; gap: 48px; align-items: center; }
+@media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; } .hero { padding-top: 40px; } }
+.eyebrow {
+  display: inline-flex; gap: 8px; align-items: center;
+  font: 600 .78rem/1 "JetBrains Mono", monospace;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
+  border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; background: var(--surface);
+}
+.eyebrow .dot { width: 8px; height: 8px; background: var(--accent); }
+h1 {
+  font-size: clamp(2.2rem, 5.2vw, 3.6rem); line-height: 1.05;
+  letter-spacing: -.035em; margin: 20px 0 16px; font-weight: 800;
+}
+h1 .rust { color: var(--rust); }
+.lede { font-size: 1.15rem; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.stats { display: flex; gap: 28px; margin-top: 32px; flex-wrap: wrap; }
+.stats div { font-size: .85rem; color: var(--muted); }
+.stats b { display: block; font-size: 1.3rem; color: var(--text); letter-spacing: -.02em; }
+
+/* code window */
+.window {
+  background: var(--code-bg); border-radius: 12px; overflow: hidden;
+  box-shadow: var(--shadow); border: 1px solid rgb(255 255 255 / .06);
+  min-width: 0;
+}
+.window-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid rgb(255 255 255 / .06); }
+.window-bar i { width: 10px; height: 10px; border-radius: 2px; background: #3a3d42; }
+.window-bar span { margin-left: 8px; font: .8rem "JetBrains Mono", monospace; color: #8a8f98; }
+pre { margin: 0; padding: 18px 20px; overflow-x: auto; color: var(--code-text); font-size: .86rem; line-height: 1.65; scrollbar-color: #3a3d42 transparent; }
+@media (max-width: 600px) { pre { font-size: .72rem; padding: 14px; } }
+.kw { color: var(--c-kw); } .ty { color: var(--c-ty); } .st { color: var(--c-str); }
+.cm { color: var(--c-cm); font-style: italic; } .ma { color: var(--c-mac); }
+
+/* sections */
+section { padding: 72px 0; }
+section.alt { background: var(--bg-alt); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); letter-spacing: -.025em; margin: 0 0 10px; line-height: 1.15; }
+.sub { color: var(--muted); margin: 0 0 36px; max-width: 42em; font-size: 1.05rem; }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 22px; box-shadow: var(--shadow);
+}
+.card h3 { margin: 12px 0 6px; font-size: 1.05rem; letter-spacing: -.01em; }
+.card p { margin: 0; color: var(--muted); font-size: .95rem; }
+.ico {
+  width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-strong);
+}
+.ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* examples */
+.examples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 900px) { .examples { grid-template-columns: 1fr; } }
+.example { display: flex; flex-direction: column; }
+.example .tag { font: 600 .75rem "JetBrains Mono", monospace; color: var(--rust); }
+.example h3 { font-size: 1.25rem; margin: 6px 0 8px; }
+.cmds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.cmds code { font-size: .78rem; }
+
+/* table */
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); background: var(--bg-alt); }
+td code { white-space: nowrap; }
+
+/* steps */
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+@media (max-width: 900px) { .steps { grid-template-columns: 1fr; } }
+.step { counter-increment: s; }
+.step::before {
+  content: counter(s); display: grid; place-items: center;
+  width: 30px; height: 30px; background: var(--accent); color: var(--accent-text);
+  font-weight: 800; box-shadow: inset 0 -3px 0 rgb(0 0 0 / .2);
+}
+.step .window { margin-top: 14px; }
+.step pre { font-size: .8rem; padding: 14px 16px; }
+.note { font-size: .9rem; color: var(--muted); margin-top: 24px; }
+
+/* footer */
+footer { padding: 40px 0 56px; color: var(--muted); font-size: .88rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; justify-content: space-between; }
+footer p { margin: 0; max-width: 46em; }
+footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg class="brand-block" viewBox="0 0 8 8" shape-rendering="crispEdges" aria-hidden="true">
+        <rect width="8" height="8" fill="#866043"/><rect width="8" height="3" fill="#5d9c3a"/>
+        <rect x="1" y="3" width="1" height="1" fill="#5d9c3a"/><rect x="5" y="3" width="2" height="1" fill="#5d9c3a"/>
+        <rect x="3" y="5" width="1" height="1" fill="#a07a55"/><rect x="6" y="6" width="1" height="1" fill="#6b4b33"/>
+      </svg>
+      Horizon Server Plugins
+    </a>
+    <div class="links">
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#examples">Examples</a>
+      <a class="opt" href="#start">Get started</a>
+      <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/blob/main/docs/plugins.md">Docs</a>
+      <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow"><span class="dot"></span>Minecraft: Java Edition 26.3 · MIT</span>
+      <h1>Paper-style plugins,<br>written in <span class="rust">Rust</span>.</h1>
+      <p class="lede">A Minecraft server built on Horizon, with a plugin API shaped like Paper's: events with priorities, commands with permissions, a scheduler, <code>config.yml</code>, and reload without a restart.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#start">Get started</a>
+        <a class="btn btn-ghost" href="https://github.com/JoaoVictorCoder/horizon-server-plugins">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L8 12.6l-4.8 2.5.9-5.4L.2 5.9l5.4-.8z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+      <div class="stats">
+        <div><b>25+</b>events</div>
+        <div><b>3</b>example plugins</div>
+        <div><b>C ABI</b>any Rust version</div>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="window-bar"><i></i><i></i><i></i><span>src/lib.rs</span></div>
+<pre><code><span class="kw">use</span> horizon_plugin_api::prelude::*;
+
+<span class="ma">#[derive(Default)]</span>
+<span class="kw">struct</span> <span class="ty">Hello</span>;
+
+<span class="kw">impl</span> <span class="ty">Plugin</span> <span class="kw">for</span> <span class="ty">Hello</span> {
+    <span class="kw">fn</span> on_enable(&amp;<span class="kw">mut</span> self, ctx: &amp;<span class="kw">mut</span> <span class="ty">Ctx</span>&lt;Self&gt;) {
+        ctx.on(|_, _, e: &amp;<span class="kw">mut</span> <span class="ty">PlayerJoinEvent</span>| {
+            e.player.send_message(
+                &amp;color::translate(<span class="st">'&amp;'</span>, <span class="st">"&amp;aWelcome!"</span>),
+            );
+        });
+    }
+}
+
+<span class="ma">horizon_plugin!</span>(
+    <span class="ty">Hello</span>,
+    <span class="ty">PluginDescription</span>::new(<span class="st">"Hello"</span>, <span class="st">"1.0.0"</span>),
+);</code></pre>
+    </div>
+  </div>
+</header>
+
+<section id="features" class="alt">
+  <div class="wrap">
+    <h2>Everything a plugin author expects</h2>
+    <p class="sub">If you have written a Bukkit or Paper plugin, you already know the shape. The difference is that it compiles to a native library and doesn't need a JVM.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+        <h3>Events</h3>
+        <p>Join, quit, move, chat, clicks, block break and place, attacks, mob spawns, explosions, pistons, chest menus, ticks. Priorities and cancelling included.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg></div>
+        <h3>Commands</h3>
+        <p>Declared in <code>plugin.yml</code> or in code, with aliases, permissions and tab completion. Even <code>//set</code>-style names.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Permissions</h3>
+        <p><code>permissions.yml</code> with groups, inheritance, <code>-permission</code> to deny and <code>homes.*</code> wildcards.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></div>
+        <h3>Hot reload</h3>
+        <p><code>/plugins reload</code> reloads plugins and their configs while the server keeps running.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+        <h3>Scheduler</h3>
+        <p><code>run_task</code>, <code>run_later</code>, <code>run_timer</code>, and <code>run_async</code> with a handle back to the server thread.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+        <h3>Stable ABI</h3>
+        <p>Plugins talk to the server through a C ABI. A plugin built with any Rust version loads in any server with the same ABI version.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="examples">
+  <div class="wrap">
+    <h2>Example plugins included</h2>
+    <p class="sub">Each one is written from scratch against the API, so you can read it and copy what you need.</p>
+    <div class="examples">
+      <div class="card example">
+        <span class="tag">api/examples/homes</span>
+        <h3>Homes</h3>
+        <p>Set homes and go back to them, with a chest menu to pick one, a limit from <code>config.yml</code> and a protected spawn.</p>
+        <div class="cmds"><code>/sethome</code><code>/home</code><code>/delhome</code><code>/homes</code></div>
+      </div>
+      <div class="card example">
+        <span class="tag">api/examples/horizonedit</span>
+        <h3>HorizonEdit</h3>
+        <p>WorldEdit's commands, rewritten in Rust: selections, fills, copy and paste, rotation, shapes and undo.</p>
+        <div class="cmds"><code>//wand</code><code>//set</code><code>//replace</code><code>//copy</code><code>//paste</code><code>//rotate</code><code>//sphere</code><code>//stack</code><code>//undo</code></div>
+      </div>
+      <div class="card example">
+        <span class="tag">api/examples/dragao</span>
+        <h3>Dragão</h3>
+        <p>Builds a little dragon out of blocks wherever you stand, in the colour you choose.</p>
+        <div class="cmds"><code>/dragao [colour]</code><code>/dragon</code></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>Coming from Paper?</h2>
+    <p class="sub">Paper <code>.jar</code> files don't run here, since they are Java bytecode built against Bukkit's classes. But a Paper plugin ports to this API almost line for line.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Bukkit / Paper</th><th>horizon-plugin-api</th></tr></thead>
+        <tbody>
+          <tr><td><code>JavaPlugin.onEnable()</code></td><td><code>Plugin::on_enable(&amp;mut self, ctx)</code></td></tr>
+          <tr><td><code>@EventHandler(priority)</code></td><td><code>ctx.listen::&lt;E&gt;(priority, ignore_cancelled, ...)</code>, <code>ctx.on</code></td></tr>
+          <tr><td><code>getCommand("x").setExecutor</code></td><td><code>ctx.set_executor("x", ...)</code></td></tr>
+          <tr><td><code>BukkitScheduler.runTaskTimer</code></td><td><code>ctx.run_timer</code></td></tr>
+          <tr><td><code>getConfig()</code></td><td><code>ctx.config()</code></td></tr>
+          <tr><td><code>Player.sendMessage / teleport</code></td><td><code>player.send_message</code> / <code>teleport</code></td></tr>
+          <tr><td><code>ChatColor.translateAlternateColorCodes</code></td><td><code>color::translate('&amp;', ...)</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The full table and every event: <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/blob/main/docs/plugins.md">docs/plugins.md</a>.</p>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="sub">You need <a href="https://rustup.rs">Rust</a>, <code>curl</code>, <code>tar</code>, <code>git</code> and a C compiler. The first build takes about 10 minutes.</p>
+    <div class="steps">
+      <div class="step">
+        <h3>Build the server</h3>
+        <p>Downloads Horizon at a pinned commit, applies the patch and builds only the server.</p>
+        <div class="window"><pre><code>git clone https://github.com/JoaoVictorCoder/horizon-server-plugins
+cd horizon-server-plugins
+./build.sh</code></pre></div>
+      </div>
+      <div class="step">
+        <h3>Add the game files</h3>
+        <p>Prepared from your own copy of Minecraft. The easy way is to install the <a href="https://playhorizon.dev">Horizon launcher</a> and play once.</p>
+        <div class="window"><pre><code>cp dist/plugins/* server/plugins/
+cd server
+./iniciar.sh --initSettings</code></pre></div>
+      </div>
+      <div class="step">
+        <h3>Start it</h3>
+        <p>Accept Mojang's EULA in <code>eula.txt</code>, then start. The terminal is the console.</p>
+        <div class="window"><pre><code>./iniciar.sh
+<span class="cm"># then: op YourName, plugins, stop</span></code></pre></div>
+      </div>
+    </div>
+    <p class="note">To write your own plugin, add <code>horizon-plugin-api</code> as a git dependency with <code>crate-type = ["cdylib"]</code>, then run <code>cargo build --release</code> and drop the library into <code>plugins/</code>.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Built on <a href="https://github.com/horizon-rust/horizon">Horizon</a> by Ludovic Marie and the Horizon contributors. MIT licensed.<br>
+    Minecraft is a trademark of Mojang Studios. This project is not affiliated with Mojang, Microsoft, Horizon, Paper or WorldEdit.</p>
+    <p><a href="https://github.com/JoaoVictorCoder/horizon-server-plugins">GitHub</a> · <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/blob/main/CREDITS.md">Credits</a> · <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/issues">Issues</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
