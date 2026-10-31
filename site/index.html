@@ -214,6 +214,19 @@ td code { white-space: nowrap; }
 .compare td.yes { color: var(--text); }
 .compare td.yes::before { content: "\2713  "; color: var(--accent-strong); font-weight: 800; }
 
+/* benchmark */
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+@media (max-width: 900px) { .stats-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
+.stat b { display: block; font-size: 2rem; letter-spacing: -.03em; line-height: 1.1; }
+.stat span { display: block; font-weight: 700; margin: 4px 0 8px; }
+.stat p { font-size: .88rem; }
+.stat.win b { color: var(--accent-strong); }
+.stat.loss b { color: var(--muted); }
+.bench td.best { color: var(--accent-strong); font-weight: 700; }
+.bench tr.group td { border-top: 2px solid var(--border); }
+.bench td { white-space: nowrap; }
+
 /* footer */
 footer { padding: 40px 0 56px; color: var(--muted); font-size: .88rem; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; justify-content: space-between; }
@@ -236,6 +249,7 @@ footer a { color: var(--muted); }
     <div class="links">
       <a class="opt" href="#features">Features</a>
       <a class="opt" href="#why">Why</a>
+      <a class="opt" href="#benchmark">Benchmark</a>
       <a class="opt" href="#examples">Examples</a>
       <a class="opt" href="#plugins">Plugins</a>
       <a class="opt" href="#start">Get started</a>
@@ -378,7 +392,34 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section id="examples" class="alt">
+<section id="benchmark" class="alt">
+  <div class="wrap">
+    <h2>Benchmark against Paper</h2>
+    <p class="sub">The same bots walking, exploring and idling on both servers, with Horizon's own server benchmark. This server ran with its plugins loaded; Paper ran with none.</p>
+    <div class="stats-grid">
+      <div class="card stat win"><b>~3×</b><span>less memory</span><p>0.74–1.09 GB against Paper's 3.4 GB (with a 3 GB heap).</p></div>
+      <div class="card stat win"><b>~3×</b><span>faster start</span><p>2.1–2.5 s to <code>Done</code>, against 7.0–7.7 s.</p></div>
+      <div class="card stat win"><b>28–55%</b><span>smaller lag spikes</span><p>Worst 5-second P99: 67.7 ms against 94.0 ms with 25 bots.</p></div>
+      <div class="card stat loss"><b>8–15%</b><span>Paper's average tick is shorter</span><p>14.7 ms against 16.2 ms with 25 bots. Both hold 20 TPS, far below the 50 ms limit.</p></div>
+    </div>
+    <div class="table-wrap bench">
+      <table>
+        <thead><tr><th>Bots</th><th>Server</th><th>Avg tick</th><th>P99</th><th>Worst P99</th><th>Memory</th><th>CPU</th><th>Start</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Horizon + plugins</td><td>4.91 ms</td><td>11.06 ms</td><td class="best">25.5 ms</td><td class="best">0.74 GB</td><td>17 %</td><td class="best">2.3 s</td></tr>
+          <tr><td>1</td><td>Paper</td><td class="best">4.53 ms</td><td class="best">10.45 ms</td><td>56.6 ms</td><td>3.42 GB</td><td class="best">15 %</td><td>7.7 s</td></tr>
+          <tr class="group"><td>10</td><td>Horizon + plugins</td><td>11.68 ms</td><td>21.40 ms</td><td class="best">57.1 ms</td><td class="best">1.03 GB</td><td class="best">38 %</td><td class="best">2.5 s</td></tr>
+          <tr><td>10</td><td>Paper</td><td class="best">10.14 ms</td><td class="best">21.03 ms</td><td>77.8 ms</td><td>3.46 GB</td><td>41 %</td><td>7.7 s</td></tr>
+          <tr class="group"><td>25</td><td>Horizon + plugins</td><td>16.23 ms</td><td class="best">28.42 ms</td><td class="best">67.7 ms</td><td class="best">1.09 GB</td><td class="best">57 %</td><td class="best">2.1 s</td></tr>
+          <tr><td>25</td><td>Paper</td><td class="best">14.71 ms</td><td>30.72 ms</td><td>94.0 ms</td><td>3.46 GB</td><td>69 %</td><td>7.0 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Paper 26.3 build 235 on Java 25 (<code>-Xms3G -Xmx3G</code>), seed 12345, view distance 10, 120 s warm-up and 300 s measured per run, equal work on both (chunks sent within 2 %). One run each on a 12-thread desktop, so a few percent is within noise. 100 % CPU is one thread. <a href="https://github.com/JoaoVictorCoder/horizon-server-plugins/tree/main/benchmarks/2026-10-31-paper">Method, limits and raw data</a>.</p>
+  </div>
+</section>
+
+<section id="examples">
   <div class="wrap">
     <h2>Example plugins included</h2>
     <p class="sub">Small on purpose: each one shows a part of the API in a few hundred lines, so you can read it and copy what you need.</p>
@@ -399,7 +440,7 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section id="plugins">
+<section id="plugins" class="alt">
   <div class="wrap">
     <h2>Plugins built on it</h2>
     <p class="sub">Full plugins live in repositories of their own and depend on <code>horizon-plugin-api</code> through <code>git</code>, like any plugin you write.</p>
@@ -421,7 +462,7 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section class="alt">
+<section>
   <div class="wrap">
     <h2>Coming from Paper?</h2>
     <p class="sub">Paper <code>.jar</code> files don't run here, since they are Java bytecode built against Bukkit's classes. But a Paper plugin ports to this API almost line for line.</p>
@@ -443,7 +484,7 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
-<section id="start">
+<section id="start" class="alt">
   <div class="wrap">
     <h2>Get started</h2>
     <p class="sub">You need <a href="https://rustup.rs">Rust</a>, <code>curl</code>, <code>tar</code>, <code>git</code> and a C compiler. The first build takes about 10 minutes.</p>
