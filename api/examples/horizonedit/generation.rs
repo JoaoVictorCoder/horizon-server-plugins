@@ -138,20 +138,31 @@ pub fn hpyramid(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: 
 }
 
 /// `//generate <pattern> <expression>`: the blocks of the selection where
-/// the expression is true, with `x`, `y`, `z` from -1 to 1 across the
-/// selection (`-r`: the world's coordinates). `-h` keeps only the shell.
+/// the expression is true. `x`, `y`, `z` run from -1 to 1 across the
+/// selection; in blocks with `-r` (the world's coordinates), `-o` (from
+/// where the player stands) or `-c` (from the selection's centre). `-h`
+/// keeps only the shell.
 pub fn generate(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
     let (rest, f) = flags(a);
-    let pattern = Pattern::parse(rest.first().ok_or("Usage: //generate <pattern> <expression> [-h] [-r]")?)?;
+    let pattern = Pattern::parse(rest.first().ok_or("Usage: //generate <pattern> <expression> [-h] [-r|-o|-c]")?)?;
     if rest.len() < 2 {
         return Err("An expression is needed, e.g. x^2+y^2+z^2<1".into());
     }
     let expr = expr::parse(&rest[1..].join(" "))?;
     let (lo, hi) = e.selection(p)?;
-    let raw = f.contains('r');
+    let origin: Option<[f64; 3]> = if f.contains('r') {
+        Some([0.0; 3])
+    } else if f.contains('o') {
+        let h = here(p);
+        Some([f64::from(h[0]), f64::from(h[1]), f64::from(h[2])])
+    } else if f.contains('c') {
+        Some(std::array::from_fn(|i| f64::from(lo[i] + hi[i]) / 2.0))
+    } else {
+        None
+    };
     let coords = |q: Pos| -> [f64; 3] {
-        if raw {
-            return [f64::from(q[0]), f64::from(q[1]), f64::from(q[2])];
+        if let Some(o) = origin {
+            return std::array::from_fn(|i| f64::from(q[i]) - o[i]);
         }
         std::array::from_fn(|i| {
             let (a, b) = (f64::from(lo[i]), f64::from(hi[i]));

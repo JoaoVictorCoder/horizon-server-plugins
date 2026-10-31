@@ -2,7 +2,7 @@
 //! where the player looks, out of blocks.
 
 use crate::pattern::is_passable;
-use crate::{HorizonEdit, MAX_Y, MIN_Y, Pos, here, msg, number, target};
+use crate::{HorizonEdit, MAX_Y, MIN_Y, Pos, flags, here, msg, number, target};
 use horizon_plugin_api::prelude::*;
 use horizon_plugin_api::types::Region;
 
@@ -75,7 +75,10 @@ pub fn descend(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[S
     Ok(())
 }
 
+/// `/ceil [clearance] [-f] [-g]`: up under the ceiling, on a glass block
+/// (`-f`: none, for a player who can fly; `-g` is the default here).
 pub fn ceil(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let (a, f) = flags(a);
     let clearance = number(a.first(), 0)?.max(0);
     let (c, region) = column(e, p)?;
     let roof = (c[1] + 2..=MAX_Y).find(|&y| !open(&region, c[0], y, c[2])).ok_or("No ceiling above you.")?;
@@ -83,7 +86,9 @@ pub fn ceil(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[St
     if feet <= c[1] {
         return Err("You are under the ceiling already.".into());
     }
-    e.apply(ctx, p, vec![([c[0], feet - 1, c[2]], "minecraft:glass".to_owned())])?;
+    if !f.contains('f') {
+        e.apply(ctx, p, vec![([c[0], feet - 1, c[2]], "minecraft:glass".to_owned())])?;
+    }
     go(p, [c[0], feet, c[2]]);
     msg(p, "Whoosh!");
     Ok(())
@@ -130,14 +135,26 @@ pub fn unstuck(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, _: &[S
     Ok(())
 }
 
+/// `//up <distance> [-f] [-g]`: straight up onto a glass block (`-f`:
+/// none, for a player who can fly), stopping under a ceiling.
 pub fn up(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let (a, f) = flags(a);
     let n = number(a.first(), 1)?;
     if !(1..=256).contains(&n) {
         return Err("Go up 1 to 256 blocks.".into());
     }
     let c = here(p);
+    // Not through a ceiling: stop under the first solid block above.
+    let (_, column) = column(e, p)?;
+    let roof = (c[1] + 2..=c[1] + n + 1).find(|&y| !open(&column, c[0], y, c[2]));
+    let n = roof.map_or(n, |r| (r - 2 - c[1]).min(n));
+    if n < 1 {
+        return Err("There is no room above you.".into());
+    }
     let floor = [c[0], c[1] + n - 1, c[2]];
-    e.apply(ctx, p, vec![(floor, "minecraft:glass".to_owned())])?;
+    if !f.contains('f') {
+        e.apply(ctx, p, vec![(floor, "minecraft:glass".to_owned())])?;
+    }
     let l = &p.location;
     p.teleport(&Location::new(&l.world, l.x, f64::from(floor[1] + 1), l.z).with_rotation(l.yaw, l.pitch));
     msg(p, "Whoosh!");

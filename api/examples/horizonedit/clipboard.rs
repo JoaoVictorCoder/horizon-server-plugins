@@ -2,7 +2,7 @@
 //! (`plugins/HorizonEdit/schematics/<name>.hschem`, a text format of this
 //! plugin's own).
 
-use crate::pattern::{flip_state, is_air, rotate_state};
+use crate::pattern::{Pattern, flip_state, is_air, rotate_state, tip_state};
 use crate::{Clipboard, HorizonEdit, Placed, Pos, add, boxed, dir, flags, here, in_world, msg, number};
 use horizon_plugin_api::prelude::*;
 use std::path::PathBuf;
@@ -47,9 +47,14 @@ pub fn copy(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, _: &[Stri
     Ok(())
 }
 
-pub fn cut(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, _: &[String]) -> Result {
+/// `//cut [leave]`: what is left behind is `leave` (air without one).
+pub fn cut(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let leave = match a.first() {
+        Some(t) => Pattern::parse(t)?,
+        None => Pattern::single("air"),
+    };
     let (lo, hi, n) = copy_region(e, p)?;
-    let changes = boxed(lo, hi).map(|q| (q, "minecraft:air".to_owned())).collect();
+    let changes = e.fill_with(boxed(lo, hi), &leave);
     e.apply(ctx, p, changes)?;
     msg(p, &format!("{n} blocks cut."));
     Ok(())
@@ -87,25 +92,41 @@ pub fn paste(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[S
     Ok(())
 }
 
-pub fn rotate(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let deg = number(a.first(), 90)?;
+/// Quarter turns of `deg` degrees.
+fn quarters(deg: i32) -> std::result::Result<u8, String> {
     if deg % 90 != 0 {
-        return Err("Rotate by a multiple of 90 degrees (around the vertical axis).".into());
+        return Err("Rotate by multiples of 90 degrees.".into());
     }
-    let quarters = (deg.rem_euclid(360) / 90) as u8;
+    Ok((deg.rem_euclid(360) / 90) as u8)
+}
+
+/// `//rotate <y> [x] [z]`: degrees around the vertical axis, then the
+/// east-west one, then the north-south one.
+pub fn rotate(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let (y, x, z) = (
+        quarters(number(a.first(), 90)?)?,
+        quarters(number(a.get(1), 0)?)?,
+        quarters(number(a.get(2), 0)?)?,
+    );
     let s = e.session(p);
     let clip = s.clipboard.as_mut().ok_or("Your clipboard is empty. Use //copy first.")?;
     for (d, b) in clip.blocks.iter_mut() {
-        let [x, y, z] = *d;
-        *d = match quarters {
-            1 => [-z, y, x],
-            2 => [-x, y, -z],
-            3 => [z, y, -x],
-            _ => [x, y, z],
-        };
-        *b = rotate_state(b, quarters);
+        for _ in 0..y {
+            *d = [-d[2], d[1], d[0]];
+        }
+        *b = rotate_state(b, y);
+        for _ in 0..x {
+            // Around x: up turns north.
+            *d = [d[0], d[2], -d[1]];
+        }
+        *b = tip_state(b, 0, x);
+        for _ in 0..z {
+            // Around z: up turns east (and east down).
+            *d = [d[1], -d[0], d[2]];
+        }
+        *b = tip_state(b, 2, z);
     }
-    msg(p, &format!("The clipboard copy has been rotated by {deg} degrees."));
+    msg(p, &format!("The clipboard copy has been rotated ({}, {}, {}).", u16::from(y) * 90, u16::from(x) * 90, u16::from(z) * 90));
     Ok(())
 }
 

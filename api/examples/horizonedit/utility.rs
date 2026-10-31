@@ -59,7 +59,7 @@ fn holes(region: &Region, start: Pos, r: i32, depth: i32, under: bool) -> Vec<Po
 fn fill_cmd(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String], under: bool) -> Result {
     let pattern = Pattern::parse(a.first().ok_or("Usage: //fill <pattern> <radius> [depth]")?)?;
     let r = radius(a.get(1), 0, 64).map_err(|_| "Usage: //fill <pattern> <radius> [depth] (radius 1 to 64)".to_owned())?;
-    let depth = number(a.get(2), r)?.clamp(1, 128);
+    let depth = number(a.get(2), 1)?.clamp(1, 128);
     let start = here(p);
     let region = e.read(p, [start[0] - r, start[1] - depth, start[2] - r], [start[0] + r, start[1], start[2] + r])?;
     let cells = holes(&region, start, r, depth, under);
@@ -105,12 +105,16 @@ fn level(state: &str) -> i32 {
         .unwrap_or(0)
 }
 
+/// `//drain <radius> [-w]`: liquids become air; `-w` dries waterlogged
+/// blocks too.
 pub fn drain(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let (a, f) = flags(a);
     let r = radius(a.first(), 5, 32)?;
+    let unlog = f.contains('w');
     let n = change_around(e, ctx, p, r, |_, _, b| {
         if matches!(kind_of(b), "minecraft:water" | "minecraft:lava" | "minecraft:bubble_column") {
             Some("minecraft:air".into())
-        } else if b.contains("waterlogged=true") {
+        } else if unlog && b.contains("waterlogged=true") {
             Some(b.replace("waterlogged=true", "waterlogged=false"))
         } else {
             None
@@ -175,9 +179,12 @@ pub fn removenear(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a
     Ok(())
 }
 
+/// `//replacenear <radius> [from] <to>`: without `from`, every block but air.
 pub fn replacenear(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let [size, from, to] = a else {
-        return Err("Usage: //replacenear <size> <from> <to>".into());
+    let (size, from, to) = match a {
+        [size, to] => (size, "#existing", to),
+        [size, from, to] => (size, from.as_str(), to),
+        _ => return Err("Usage: //replacenear <radius> [from] <to>".into()),
     };
     let r = radius(Some(size), 1, 64)?;
     let mask = Mask::parse(from)?;
@@ -191,8 +198,8 @@ pub fn replacenear(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, 
     Ok(())
 }
 
-/// Within `r` across, the highest block of each column (up to `r` above
-/// the player) that isn't air.
+/// Within `r` across, the highest block of each column (between `lo`
+/// and `hi`) that isn't air.
 fn column_tops(region: &Region, lo: Pos, hi: Pos, c: Pos, r: i32) -> Vec<Pos> {
     let mut out = Vec::new();
     for z in lo[2]..=hi[2] {
@@ -208,16 +215,44 @@ fn column_tops(region: &Region, lo: Pos, hi: Pos, c: Pos, r: i32) -> Vec<Pos> {
     out
 }
 
+/// `[size] [height]`: the cylinder of radius `size` around the player,
+/// `height` up and down (the size again without one), read.
+fn cylinder_around(e: &HorizonEdit, p: &Player, a: &[String], default: i32) -> std::result::Result<(i32, Pos, Pos, Region), String> {
+    let r = radius(a.first(), default, 64)?;
+    let h = number(a.get(1), r)?.clamp(1, 384);
+    let c = here(p);
+    let lo = [c[0] - r, (c[1] - h).max(MIN_Y), c[2] - r];
+    let hi = [c[0] + r, (c[1] + h).min(MAX_Y), c[2] + r];
+    let region = e.read(p, lo, hi)?;
+    Ok((r, lo, hi, region))
+}
+
+/// The layers of a snow layer state.
+fn layers(state: &str) -> u8 {
+    state
+        .split("layers=")
+        .nth(1)
+        .and_then(|v| v.trim_end_matches(']').split(',').next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+}
+
+/// `//snow [size] [height] [-s]`: snow on the ground, ice on still water;
+/// `-s` adds a layer to snow already there.
 pub fn snow(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let r = radius(a.first(), 10, 64)?;
-    let (lo, hi, region) = around(e, p, r)?;
+    let (a, f) = flags(a);
+    let (r, lo, hi, region) = cylinder_around(e, p, &a, 10)?;
     let mut changes = Vec::new();
     for t in column_tops(&region, lo, hi, here(p), r) {
         let b = region.get(t[0], t[1], t[2]).unwrap_or_default();
-        if kind_of(b) == "minecraft:water" && level(b) == 0 {
-            changes.push((t, "minecraft:ice".to_owned()));
-        } else if !is_passable(b) && !matches!(kind_of(b), "minecraft:ice" | "minecraft:packed_ice") && t[1] < MAX_Y {
-            changes.push(([t[0], t[1] + 1, t[2]], "minecraft:snow".to_owned()));
+        match kind_of(b) {
+            "minecraft:water" if level(b) == 0 => changes.push((t, "minecraft:ice".to_owned())),
+            "minecraft:snow" if f.contains('s') && layers(b) < 8 => {
+                changes.push((t, format!("minecraft:snow[layers={}]", layers(b) + 1)));
+            }
+            "minecraft:snow" | "minecraft:ice" | "minecraft:packed_ice" => {}
+            _ if !is_passable(b) && t[1] < MAX_Y => changes.push(([t[0], t[1] + 1, t[2]], "minecraft:snow".to_owned())),
+            _ => {}
         }
     }
     let n = e.apply(ctx, p, changes)?;
@@ -225,23 +260,36 @@ pub fn snow(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[St
     Ok(())
 }
 
+/// `//thaw [size] [height]`.
 pub fn thaw(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let r = radius(a.first(), 10, 64)?;
-    let n = change_around(e, ctx, p, r, |_, _, b| match kind_of(b) {
-        "minecraft:snow" => Some("minecraft:air".into()),
-        "minecraft:ice" => Some("minecraft:water".into()),
-        _ => None,
-    })?;
+    let (r, lo, hi, region) = cylinder_around(e, p, a, 10)?;
+    let c = here(p);
+    let changes: Vec<(Pos, String)> = boxed(lo, hi)
+        .filter(|q| (q[0] - c[0]).pow(2) + (q[2] - c[2]).pow(2) <= r * r)
+        .filter_map(|q| match region.get(q[0], q[1], q[2]).map(kind_of)? {
+            "minecraft:snow" => Some((q, "minecraft:air".to_owned())),
+            "minecraft:ice" => Some((q, "minecraft:water".to_owned())),
+            _ => None,
+        })
+        .collect();
+    let n = e.apply(ctx, p, changes)?;
     msg(p, &format!("{n} surfaces thawed."));
     Ok(())
 }
 
+/// `//green [size] [height] [-f]`: dirt under open sky (the top of its
+/// column) becomes grass; `-f` coarse dirt too.
 pub fn green(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let r = radius(a.first(), 10, 64)?;
-    let n = change_around(e, ctx, p, r, |reg, q, b| {
-        let open = reg.get(q[0], q[1] + 1, q[2]).is_none_or(is_passable);
-        (kind_of(b) == "minecraft:dirt" && open).then(|| "minecraft:grass_block".to_owned())
-    })?;
+    let (a, f) = flags(a);
+    let (r, lo, hi, region) = cylinder_around(e, p, &a, 10)?;
+    let mut changes = Vec::new();
+    for t in column_tops(&region, lo, hi, here(p), r) {
+        let k = region.get(t[0], t[1], t[2]).map(kind_of);
+        if k == Some("minecraft:dirt") || (f.contains('f') && k == Some("minecraft:coarse_dirt")) {
+            changes.push((t, "minecraft:grass_block".to_owned()));
+        }
+    }
+    let n = e.apply(ctx, p, changes)?;
     msg(p, &format!("{n} surfaces greened."));
     Ok(())
 }
@@ -255,34 +303,57 @@ pub fn extinguish(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a
     Ok(())
 }
 
-/// Mobs `//butcher` kills, and with `-a` the animals too.
+/// What `//butcher` kills: hostile mobs, and with flags the others.
 const HOSTILE: &[&str] = &[
     "zombie", "zombie_villager", "husk", "drowned", "skeleton", "stray", "bogged", "wither_skeleton",
     "creeper", "spider", "cave_spider", "enderman", "endermite", "silverfish", "witch", "slime",
     "magma_cube", "blaze", "ghast", "phantom", "pillager", "vindicator", "evoker", "ravager", "vex",
-    "guardian", "elder_guardian", "shulker", "hoglin", "zoglin", "piglin_brute", "zombified_piglin",
-    "breeze", "creaking",
+    "illusioner", "guardian", "elder_guardian", "shulker", "hoglin", "zoglin", "piglin", "piglin_brute",
+    "zombified_piglin", "breeze", "creaking", "warden", "wither",
 ];
+/// `-a`: animals (not pets or water mobs).
 const ANIMALS: &[&str] = &[
     "cow", "pig", "sheep", "chicken", "horse", "donkey", "mule", "rabbit", "goat", "llama", "fox",
-    "wolf", "cat", "ocelot", "parrot", "bee", "turtle", "frog", "armadillo", "camel", "sniffer",
-    "mooshroom", "panda", "polar_bear", "squid", "glow_squid", "cod", "salmon", "tropical_fish",
-    "pufferfish", "axolotl", "dolphin", "bat", "strider",
+    "turtle", "frog", "armadillo", "camel", "sniffer", "mooshroom", "panda", "polar_bear", "bee",
+    "strider", "trader_llama", "skeleton_horse", "zombie_horse", "happy_ghast",
 ];
+/// `-p`: pets (WorldEdit kills only untamed ones without it; here all of the kind).
+const PETS: &[&str] = &["wolf", "cat", "ocelot", "parrot"];
+/// `-n`: villagers and traders.
+const NPCS: &[&str] = &["villager", "wandering_trader"];
+/// `-g`: golems.
+const GOLEMS: &[&str] = &["iron_golem", "snow_golem", "copper_golem"];
+/// `-b`: ambient mobs.
+const AMBIENT: &[&str] = &["bat"];
+/// `-w`: water mobs.
+const WATER: &[&str] = &["squid", "glow_squid", "cod", "salmon", "tropical_fish", "pufferfish", "axolotl", "dolphin", "tadpole", "nautilus"];
+/// `-r`: armour stands.
+const STANDS: &[&str] = &["armor_stand"];
 
+/// `//butcher [radius] [-pngabwfr]`: hostile mobs within the radius (32
+/// without one; -1 for every loaded one); the flags add pets (`p`),
+/// villagers (`n`), golems (`g`), animals (`a`), bats (`b`), water mobs
+/// (`w`), every friendly mob (`f`) and armour stands (`r`).
 pub fn butcher(_: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
     let (rest, f) = flags(a);
-    let r = number(rest.first(), 32)?.clamp(1, 512);
-    let at = &p.location;
+    let r = number(rest.first(), 32)?;
     let mut kinds: Vec<&str> = HOSTILE.to_vec();
-    if f.contains('a') {
-        kinds.extend(ANIMALS);
+    let all = f.contains('f');
+    for (flag, list) in [('a', ANIMALS), ('p', PETS), ('n', NPCS), ('g', GOLEMS), ('b', AMBIENT), ('w', WATER)] {
+        if all || f.contains(flag) {
+            kinds.extend(list);
+        }
+    }
+    if f.contains('r') {
+        kinds.extend(STANDS);
     }
     let w = p.world();
+    let range = if r < 0 { String::new() } else { format!(",distance=..{}", r.max(1)) };
     for k in &kinds {
-        w.kill_entities(&format!("type=minecraft:{k},distance=..{r}"), at);
+        w.kill_entities(&format!("type=minecraft:{k}{range}"), &p.location);
     }
-    msg(p, &format!("Killed the {} mobs within {r} blocks.", if f.contains('a') { "hostile and passive" } else { "hostile" }));
+    let reach = if r < 0 { "in this world".to_owned() } else { format!("within {r} blocks") };
+    msg(p, &format!("Killed the mobs {reach} ({} kinds).", kinds.len()));
     Ok(())
 }
 

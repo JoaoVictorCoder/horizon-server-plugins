@@ -57,27 +57,61 @@ pub struct Clipboard {
     pub origin: Pos,
 }
 
-/// A brush bound to an item.
+/// The shape of a `/brush set`.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Shape {
+    Sphere,
+    Cylinder,
+    Cuboid,
+}
+
+/// A brush bound to an item. `/size` changes its radius, `/material` its
+/// pattern.
 #[derive(Clone)]
 pub enum Brush {
     Sphere { pattern: Pattern, radius: i32, hollow: bool },
     Cylinder { pattern: Pattern, radius: i32, height: i32, hollow: bool },
-    Smooth { radius: i32, iterations: u32 },
+    Set { shape: Shape, pattern: Pattern, radius: i32 },
+    Smooth { radius: i32, iterations: u32, mask: Option<Mask> },
     Clipboard { skip_air: bool },
+    Gravity { radius: i32, full_height: bool },
+    Forest { radius: i32, density: f64, tree: String },
+    Extinguish { radius: i32 },
+    Butcher { radius: i32 },
+    Raise { radius: i32 },
+    Lower { radius: i32 },
 }
 
 #[derive(Clone)]
 pub struct BrushBinding {
     pub brush: Brush,
     pub mask: Option<Mask>,
+    /// How far it reaches (`/range`).
+    pub range: f64,
 }
 
 /// A tool bound to an item.
 #[derive(Clone)]
 pub enum Tool {
     Tree(String),
+    /// Right click places the pattern; left click picks the block clicked.
     Replace(Pattern),
     Info,
+    /// The block clicked and every one like it touching it, within range.
+    FloodFill(Pattern, i32),
+    /// Logs and leaves touching the clicked one.
+    DelTree,
+    /// The wand at any distance.
+    FarWand,
+    /// Left click places the first pattern where it looks, right click the
+    /// second against the block it looks at.
+    LrBuild(Pattern, Pattern),
+    /// Left click `/jumpto`, right click `/thru`.
+    NavWand,
+    /// Repeats the clicked block away from the face clicked, within range.
+    Stacker(i32),
+    /// The selection wand on another item.
+    SelWand,
 }
 
 /// What the super pickaxe breaks with a left click.
@@ -663,9 +697,12 @@ pub const COMMANDS: &[(&str, &[&str], &str, &str, Run)] = &[
     ("unstuck", &[], "/unstuck", "out of the blocks you are in", navigation::unstuck),
     ("/up", &[], "//up <blocks>", "up onto a glass block", navigation::up),
     // Brushes and tools.
-    ("brush", &["br"], "/brush <sphere|cylinder|smooth|clipboard> ...", "bind a brush to the held item", tools::brush),
+    ("brush", &["br"], "/brush <sphere|cylinder|set|smooth|clipboard|gravity|forest|extinguish|butcher|raise|lower> ...", "bind a brush to the held item", tools::brush),
     ("mask", &[], "/mask [mask]", "the held brush's mask", tools::mask),
-    ("tool", &[], "/tool <tree [type]|repl <pattern>|info>", "bind a tool to the held item", tools::tool),
+    ("material", &["mat"], "/material <pattern>", "the held brush's pattern", tools::material),
+    ("size", &[], "/size <radius>", "the held brush's size", tools::size),
+    ("range", &[], "/range <blocks>", "how far the held brush reaches", tools::range),
+    ("tool", &[], "/tool <tree|repl|info|floodfill|deltree|farwand|lrbuild|navwand|stacker|selwand> ...", "bind a tool to the held item", tools::tool),
     ("none", &[], "/none", "unbind the held item", tools::none),
     ("sp", &["superpickaxe"], "/sp [single|area <r>|recur <r>|off]", "the super pickaxe", tools::superpickaxe),
     ("/help", &[], "//help [page]", "this list", help),
@@ -699,10 +736,19 @@ fn complete(name: &str, a: &[String]) -> Vec<String> {
         ("schematic", 1) => words(&["save", "load", "list", "delete"]),
         ("schematic", 2) => clipboard::schematic_names(),
         ("forest", 1) => region::TREES.iter().map(|(n, _)| (*n).to_owned()).collect(),
-        ("brush", 1) => words(&["sphere", "cylinder", "smooth", "clipboard"]),
-        ("brush", 2) => words(COMMON_BLOCKS),
-        ("tool", 1) => words(&["tree", "repl", "info"]),
-        ("tool", 2) => region::TREES.iter().map(|(n, _)| (*n).to_owned()).chain(words(COMMON_BLOCKS)).collect(),
+        ("brush", 1) => words(&["sphere", "cylinder", "set", "smooth", "clipboard", "gravity", "forest", "extinguish", "butcher", "raise", "lower"]),
+        ("brush", 2) if a[0] == "set" => words(&["sphere", "cylinder", "cuboid"]),
+        ("brush", 2) if matches!(a[0].as_str(), "sphere" | "s" | "cylinder" | "cyl" | "c") => words(COMMON_BLOCKS),
+        ("brush", 4) if a[0] == "forest" => region::TREES.iter().map(|(n, _)| (*n).to_owned()).collect(),
+        ("material" | "mat", 1) => words(COMMON_BLOCKS),
+        ("tool", 1) => words(&["tree", "repl", "info", "floodfill", "deltree", "farwand", "lrbuild", "navwand", "stacker", "selwand"]),
+        ("tool", 2) if a[0] == "tree" => region::TREES.iter().map(|(n, _)| (*n).to_owned()).collect(),
+        ("tool", 2 | 3) if matches!(a[0].as_str(), "repl" | "floodfill" | "lrbuild") => words(COMMON_BLOCKS),
+        ("drain", _) => words(&["-w"]),
+        ("snow", _) => words(&["-s"]),
+        ("green", _) => words(&["-f"]),
+        ("butcher", _) => words(&["-a", "-p", "-n", "-g", "-b", "-w", "-f", "-r"]),
+        ("generate", 3) => words(&["-h", "-r", "-o", "-c"]),
         ("sp", 1) => words(&["single", "area", "recur", "off"]),
         ("remove", 1) => words(utility::REMOVABLE),
         _ => Vec::new(),
@@ -719,12 +765,15 @@ impl Plugin for HorizonEdit {
                 .usage(usage)
                 .permission(PERMISSION);
             // `//wand` and `/wand` both work (a name vanilla has, such as
-            // /help or /fill, stays vanilla's with one slash).
+            // /help or /fill, stays vanilla's with one slash, and one of
+            // ours, such as the brush's /size, stays that one's).
             for a in std::iter::once(&name).chain(aliases) {
                 if *a != name {
                     spec = spec.alias(a);
                 }
-                if let Some(bare) = a.strip_prefix('/') {
+                if let Some(bare) = a.strip_prefix('/')
+                    && !COMMANDS.iter().any(|c| c.0 == bare || c.1.contains(&bare))
+                {
                     spec = spec.alias(bare);
                 }
             }

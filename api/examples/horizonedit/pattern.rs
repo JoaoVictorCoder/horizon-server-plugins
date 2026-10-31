@@ -289,6 +289,47 @@ pub fn rotate_state(state: &str, quarters: u8) -> String {
     join(kind, out)
 }
 
+/// A state turned `quarters` times around the x axis (`axis` 0) or the
+/// z axis (2), as the blocks turn when a clipboard tips over: `facing` and
+/// `axis` follow; a state with neither stays as it is.
+pub fn tip_state(state: &str, axis: usize, quarters: u8) -> String {
+    let (kind, list) = props(state);
+    if list.is_empty() || quarters % 4 == 0 {
+        return state.to_owned();
+    }
+    // The four faces a turn around the axis cycles through.
+    let ring: [&str; 4] = if axis == 0 {
+        ["up", "north", "down", "south"]
+    } else {
+        ["up", "east", "down", "west"]
+    };
+    let turn = |face: &str| -> String {
+        match ring.iter().position(|f| *f == face) {
+            Some(i) => ring[(i + quarters as usize) % 4].to_owned(),
+            None => face.to_owned(),
+        }
+    };
+    let swap = if axis == 0 { ("y", "z") } else { ("x", "y") };
+    let out = list
+        .into_iter()
+        .map(|(k, v)| match k.as_str() {
+            "facing" => (k, turn(&v)),
+            "axis" if quarters % 2 == 1 => {
+                let v = if v == swap.0 {
+                    swap.1.to_owned()
+                } else if v == swap.1 {
+                    swap.0.to_owned()
+                } else {
+                    v
+                };
+                (k, v)
+            }
+            _ => (k, v),
+        })
+        .collect();
+    join(kind, out)
+}
+
 /// A state mirrored across `axis` (0 x, 1 y, 2 z).
 pub fn flip_state(state: &str, axis: usize) -> String {
     let (kind, list) = props(state);
@@ -365,6 +406,9 @@ mod tests {
             "minecraft:oak_stairs[facing=east,half=top,shape=straight]"
         );
         assert_eq!(flip_state("minecraft:oak_slab[type=top]", 1), "minecraft:oak_slab[type=bottom]");
+        assert_eq!(tip_state("minecraft:oak_log[axis=y]", 0, 1), "minecraft:oak_log[axis=z]");
+        assert_eq!(tip_state("minecraft:piston[extended=false,facing=up]", 2, 1), "minecraft:piston[extended=false,facing=east]");
+        assert_eq!(tip_state("minecraft:stone", 0, 1), "minecraft:stone");
     }
 
     #[test]

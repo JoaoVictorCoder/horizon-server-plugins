@@ -75,11 +75,28 @@ pub fn hpos2(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, _: &[Str
     hpos(e, p, false)
 }
 
-pub fn chunk(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, _: &[String]) -> Result {
-    let [x, _, z] = here(p);
-    let (cx, cz) = (x.div_euclid(16), z.div_euclid(16));
-    e.set_selection(p, [cx * 16, MIN_Y, cz * 16], [cx * 16 + 15, MAX_Y, cz * 16 + 15]);
-    msg(p, &format!("Chunk selected: {cx}, {cz}"));
+/// `//chunk`: the chunk the player stands in; `-s` every chunk the
+/// selection touches; `-c x,z` a chunk by its chunk coordinates.
+pub fn chunk(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let (rest, f) = flags(a);
+    let (lo_c, hi_c) = if f.contains('s') {
+        let (lo, hi) = e.selection(p)?;
+        ((lo[0].div_euclid(16), lo[2].div_euclid(16)), (hi[0].div_euclid(16), hi[2].div_euclid(16)))
+    } else if f.contains('c') {
+        let text = rest.first().ok_or("Usage: //chunk -c <x,z>")?;
+        let (x, z) = text.split_once(',').ok_or("Chunk coordinates are x,z")?;
+        let n = |s: &str| s.trim().parse::<i32>().map_err(|_| format!("Not a chunk: {text}"));
+        ((n(x)?, n(z)?), (n(x)?, n(z)?))
+    } else {
+        let [x, _, z] = here(p);
+        ((x.div_euclid(16), z.div_euclid(16)), (x.div_euclid(16), z.div_euclid(16)))
+    };
+    e.set_selection(p, [lo_c.0 * 16, MIN_Y, lo_c.1 * 16], [hi_c.0 * 16 + 15, MAX_Y, hi_c.1 * 16 + 15]);
+    if lo_c == hi_c {
+        msg(p, &format!("Chunk selected: {}, {}", lo_c.0, lo_c.1));
+    } else {
+        msg(p, &format!("Chunks selected: ({}, {}) - ({}, {})", lo_c.0, lo_c.1, hi_c.0, hi_c.1));
+    }
     Ok(())
 }
 
@@ -91,12 +108,31 @@ pub fn desel(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, _: &[Str
     Ok(())
 }
 
-pub fn size(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, _: &[String]) -> Result {
+pub fn size(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
+    let (_, f) = flags(a);
+    if f.contains('c') {
+        let clip = e.session(p).clipboard.clone().ok_or("Your clipboard is empty.")?;
+        let lo: Pos = std::array::from_fn(|i| clip.blocks.iter().map(|(d, _)| d[i]).min().unwrap_or(0));
+        let hi: Pos = std::array::from_fn(|i| clip.blocks.iter().map(|(d, _)| d[i]).max().unwrap_or(0));
+        let d: Vec<i64> = (0..3).map(|i| i64::from(hi[i] - lo[i] + 1)).collect();
+        msg(p, &format!("Clipboard: {} x {} x {}, {} blocks", d[0], d[1], d[2], clip.blocks.len()));
+        msg(p, &format!("Offset from where you copied: ({}, {}, {})", lo[0], lo[1], lo[2]));
+        return Ok(());
+    }
     let (lo, hi) = e.selection(p)?;
     let d: Vec<i64> = (0..3).map(|i| i64::from(hi[i] - lo[i] + 1)).collect();
     msg(p, &format!("Region: ({}, {}, {}) - ({}, {}, {})", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]));
     msg(p, &format!("Size: {} x {} x {}, {} blocks", d[0], d[1], d[2], d[0] * d[1] * d[2]));
     Ok(())
+}
+
+/// `<amount> [reverse amount] [direction]`.
+fn amounts(p: &Player, a: &[String]) -> std::result::Result<(i32, i32, Pos), String> {
+    let n = number(a.first(), 1)?;
+    match a.get(1) {
+        Some(w) if w.parse::<i32>().is_ok() => Ok((n, number(Some(w), 0)?, dir(p, a.get(2))?)),
+        other => Ok((n, 0, dir(p, other)?)),
+    }
 }
 
 fn resized(e: &mut HorizonEdit, p: &Player, lo: Pos, hi: Pos, how: &str) -> Result {
@@ -114,12 +150,17 @@ pub fn expand(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[St
         lo[1] = MIN_Y;
         hi[1] = MAX_Y;
     } else {
-        let n = number(a.first(), 1)?;
-        let d = dir(p, a.get(1))?;
+        let (n, back, d) = amounts(p, a)?;
         for i in 0..3 {
             match d[i] {
-                1 => hi[i] += n,
-                -1 => lo[i] -= n,
+                1 => {
+                    hi[i] += n;
+                    lo[i] -= back;
+                }
+                -1 => {
+                    lo[i] -= n;
+                    hi[i] += back;
+                }
                 _ => {}
             }
         }
@@ -129,13 +170,19 @@ pub fn expand(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[St
 
 pub fn contract(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
     let (mut lo, mut hi) = e.selection(p)?;
-    let n = number(a.first(), 1)?;
-    let d = dir(p, a.get(1))?;
-    // The face opposite the direction moves towards it.
+    let (n, back, d) = amounts(p, a)?;
+    // The face opposite the direction moves towards it (and the face in
+    // the direction back by the reverse amount).
     for i in 0..3 {
         match d[i] {
-            1 => lo[i] = (lo[i] + n).min(hi[i]),
-            -1 => hi[i] = (hi[i] - n).max(lo[i]),
+            1 => {
+                lo[i] = (lo[i] + n).min(hi[i]);
+                hi[i] = (hi[i] - back).max(lo[i]);
+            }
+            -1 => {
+                hi[i] = (hi[i] - n).max(lo[i]);
+                lo[i] = (lo[i] + back).min(hi[i]);
+            }
             _ => {}
         }
     }
@@ -201,10 +248,12 @@ pub fn distr(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[Str
     let (_, f) = flags(a);
     let mut by: HashMap<String, usize> = HashMap::new();
     let mut total = 0;
+    let by_state = f.contains('d');
+    let key = |b: &str| if by_state { b.to_owned() } else { kind_of(b).to_owned() };
     if f.contains('c') {
         let clip = e.session(p).clipboard.clone().ok_or("Your clipboard is empty.")?;
         for (_, b) in &clip.blocks {
-            *by.entry(kind_of(b).to_owned()).or_default() += 1;
+            *by.entry(key(b)).or_default() += 1;
             total += 1;
         }
     } else {
@@ -212,7 +261,7 @@ pub fn distr(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[Str
         let region = e.read(p, lo, hi)?;
         for q in boxed(lo, hi) {
             if let Some(b) = region.get(q[0], q[1], q[2]) {
-                *by.entry(kind_of(b).to_owned()).or_default() += 1;
+                *by.entry(key(b)).or_default() += 1;
                 total += 1;
             }
         }

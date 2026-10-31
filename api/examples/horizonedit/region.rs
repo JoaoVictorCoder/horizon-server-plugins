@@ -137,15 +137,22 @@ pub fn faces(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[S
 
 /// The changes that smooth the surface of the columns `lo..hi` (`x`, `z`)
 /// between heights `lo[1]..hi[1]`: each column's top moves towards the
-/// average of its neighbours', `iterations` times.
-pub fn smoothed(region: &Region, lo: Pos, hi: Pos, iterations: u32) -> Vec<Placed> {
+/// average of its neighbours', `iterations` times. The surface is the
+/// highest block `mask` lets through (solid blocks without one).
+pub fn smoothed(region: &Region, lo: Pos, hi: Pos, iterations: u32, mask: Option<&Mask>) -> Vec<Placed> {
+    let ground = |x: i32, y: i32, z: i32| {
+        region.get(x, y, z).is_some_and(|b| match mask {
+            Some(m) => m.test(b, region.get(x, y - 1, z), region.get(x, y + 1, z)),
+            None => !is_passable(b),
+        })
+    };
     let (w, d) = ((hi[0] - lo[0] + 1) as usize, (hi[2] - lo[2] + 1) as usize);
     let index = |x: i32, z: i32| ((z - lo[2]) as usize) * w + (x - lo[0]) as usize;
     let mut height = vec![f64::from(lo[1] - 1); w * d];
     let mut top_block = vec![String::new(); w * d];
     for z in lo[2]..=hi[2] {
         for x in lo[0]..=hi[0] {
-            if let Some(y) = (lo[1]..=hi[1]).rev().find(|&y| region.get(x, y, z).is_some_and(|b| !is_passable(b))) {
+            if let Some(y) = (lo[1]..=hi[1]).rev().find(|&y| ground(x, y, z)) {
                 height[index(x, z)] = f64::from(y);
                 top_block[index(x, z)] = region.get(x, y, z).unwrap_or("minecraft:stone").to_owned();
             }
@@ -195,11 +202,13 @@ pub fn smoothed(region: &Region, lo: Pos, hi: Pos, iterations: u32) -> Vec<Place
     changes
 }
 
+/// `//smooth [iterations] [mask]`.
 pub fn smooth(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
     let iterations = number(a.first(), 1)?.clamp(1, 20) as u32;
+    let mask = if a.len() > 1 { Some(Mask::parse(&a[1..].join(" "))?) } else { None };
     let (lo, hi) = e.selection(p)?;
     let region = e.read(p, lo, hi)?;
-    let n = e.apply(ctx, p, smoothed(&region, lo, hi, iterations))?;
+    let n = e.apply(ctx, p, smoothed(&region, lo, hi, iterations, mask.as_ref()))?;
     msg(p, &format!("Terrain's height map smoothed: {n} blocks changed."));
     Ok(())
 }
@@ -243,9 +252,12 @@ pub fn hollow(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[
     Ok(())
 }
 
+/// `//line <pattern> [thickness] [-h]`: `-h` keeps only a tube's wall.
 pub fn line(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let pattern = Pattern::parse(a.first().ok_or("Usage: //line <pattern> [thickness]")?)?;
+    let (a, f) = flags(a);
+    let pattern = Pattern::parse(a.first().ok_or("Usage: //line <pattern> [thickness] [-h]")?)?;
     let thick = number(a.get(1), 0)?.clamp(0, 16);
+    let hollow = f.contains('h') && thick > 0;
     let s = e.session(p);
     let (Some(from), Some(to)) = (s.pos1, s.pos2) else {
         return Err("Set //pos1 and //pos2: the line runs between them.".into());
@@ -262,27 +274,64 @@ pub fn line(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[St
             }
         }
     }
+    if hollow {
+        // The inside of the tube: within thickness - 1 of the line.
+        let mut inner: HashSet<Pos> = HashSet::new();
+        let t = thick - 1;
+        for k in 0..=steps {
+            let at = f64::from(k) / f64::from(steps);
+            let c: Pos = std::array::from_fn(|i| (f64::from(from[i]) + f64::from(to[i] - from[i]) * at).round() as i32);
+            for q in boxed(add(c, [-t; 3]), add(c, [t; 3])) {
+                if (0..3).map(|i| (q[i] - c[i]).pow(2)).sum::<i32>() <= t * t {
+                    inner.insert(q);
+                }
+            }
+        }
+        cells.retain(|q| !inner.contains(q));
+    }
     let changes = e.fill_with(cells, &pattern);
     let n = e.apply(ctx, p, changes)?;
     msg(p, &format!("{n} blocks have been changed."));
     Ok(())
 }
 
-/// Tree types `//forest` and `/tool tree` take, and their features.
+/// Tree types `//forest` and `/tool tree` take (WorldEdit's names, then
+/// plainer ones), and the game's features that grow them.
 pub const TREES: &[(&str, &str)] = &[
-    ("oak", "minecraft:oak"),
+    ("tree", "minecraft:oak"),
     ("big", "minecraft:fancy_oak"),
-    ("birch", "minecraft:birch"),
-    ("spruce", "minecraft:spruce"),
+    ("redwood", "minecraft:spruce"),
+    ("tallredwood", "minecraft:mega_spruce"),
+    ("megaredwood", "minecraft:mega_pine"),
     ("pine", "minecraft:pine"),
-    ("jungle", "minecraft:jungle_tree"),
+    ("birch", "minecraft:birch"),
+    ("tallbirch", "minecraft:super_birch_bees_0002"),
+    ("jungle", "minecraft:mega_jungle_tree"),
+    ("smalljungle", "minecraft:jungle_tree"),
+    ("shortjungle", "minecraft:jungle_tree_no_vine"),
+    ("junglebush", "minecraft:jungle_bush"),
+    ("swamp", "minecraft:swamp_oak"),
     ("acacia", "minecraft:acacia"),
-    ("dark_oak", "minecraft:dark_oak"),
-    ("cherry", "minecraft:cherry"),
+    ("darkoak", "minecraft:dark_oak"),
     ("mangrove", "minecraft:mangrove"),
+    ("tallmangrove", "minecraft:tall_mangrove"),
+    ("cherry", "minecraft:cherry"),
+    ("paleoak", "minecraft:pale_oak"),
+    ("warpedfungus", "minecraft:warped_fungus_planted"),
+    ("crimsonfungus", "minecraft:crimson_fungus_planted"),
+    ("chorusplant", "minecraft:chorus_plant"),
+    ("oak", "minecraft:oak"),
+    ("spruce", "minecraft:spruce"),
+    ("dark_oak", "minecraft:dark_oak"),
 ];
 
+/// `random`: one of the common trees, by `rng`.
+const RANDOM_TREES: [&str; 6] = ["minecraft:oak", "minecraft:fancy_oak", "minecraft:birch", "minecraft:spruce", "minecraft:acacia", "minecraft:dark_oak"];
+
 pub fn tree_feature(name: &str) -> std::result::Result<&'static str, String> {
+    if name == "random" {
+        return Ok("random");
+    }
     TREES
         .iter()
         .find(|(n, _)| *n == name)
@@ -291,7 +340,7 @@ pub fn tree_feature(name: &str) -> std::result::Result<&'static str, String> {
 }
 
 pub fn forest(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
-    let feature = tree_feature(a.first().map_or("oak", String::as_str))?;
+    let feature = tree_feature(a.first().map_or("tree", String::as_str))?;
     let density = float(a.get(1), 5.0)?.clamp(0.0, 100.0);
     let (lo, hi) = e.selection(p)?;
     let region = e.read(p, lo, hi)?;
@@ -302,6 +351,11 @@ pub fn forest(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, a: &[St
     for t in tops(&region, lo, hi) {
         let ground = region.get(t[0], t[1], t[2]).map(kind_of);
         if matches!(ground, Some("minecraft:grass_block" | "minecraft:dirt" | "minecraft:podzol")) && chance(&mut rng, density) {
+            let feature = if feature == "random" {
+                RANDOM_TREES[(crate::pattern::next(&mut rng) % RANDOM_TREES.len() as u64) as usize]
+            } else {
+                feature
+            };
             commands.push(format!("execute in {world} run place feature {feature} {} {} {}", t[0], t[1] + 1, t[2]));
             top = top.max(t[1]);
         }
@@ -326,15 +380,18 @@ pub fn flora(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[S
     let mut rng = *e.rng();
     let mut changes = Vec::new();
     for t in tops(&region, lo, hi) {
-        let on_grass = region.get(t[0], t[1], t[2]).map(kind_of) == Some("minecraft:grass_block");
-        if on_grass && t[1] < hi[1] && chance(&mut rng, density) {
-            let plant = if chance(&mut rng, 85.0) {
-                "short_grass"
-            } else {
-                FLOWERS[(crate::pattern::next(&mut rng) % FLOWERS.len() as u64) as usize]
-            };
-            changes.push(([t[0], t[1] + 1, t[2]], format!("minecraft:{plant}")));
+        if t[1] >= hi[1] || !chance(&mut rng, density) {
+            continue;
         }
+        let plant = match region.get(t[0], t[1], t[2]).map(kind_of) {
+            Some("minecraft:grass_block") if chance(&mut rng, 85.0) => "short_grass",
+            Some("minecraft:grass_block") => FLOWERS[(crate::pattern::next(&mut rng) % FLOWERS.len() as u64) as usize],
+            // Cacti on sand (dead bushes now and then).
+            Some("minecraft:sand" | "minecraft:red_sand") if chance(&mut rng, 70.0) => "cactus",
+            Some("minecraft:sand" | "minecraft:red_sand") => "dead_bush",
+            _ => continue,
+        };
+        changes.push(([t[0], t[1] + 1, t[2]], format!("minecraft:{plant}")));
     }
     e.rng = rng;
     let n = e.apply(ctx, p, changes)?;
@@ -342,15 +399,21 @@ pub fn flora(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[S
     Ok(())
 }
 
+/// `//move [n] [dir] [fill] [-a] [-s]`: what is left behind becomes
+/// `fill` (air without one).
 pub fn move_cmd(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, a: &[String]) -> Result {
     let (rest, f) = flags(a);
     let n = number(rest.first(), 1)?;
     let d = dir(p, rest.get(1))?;
+    let fill = match rest.get(2) {
+        Some(t) => Pattern::parse(t)?,
+        None => Pattern::single("air"),
+    };
     let (lo, hi) = e.selection(p)?;
     let region = e.read(p, lo, hi)?;
     let off = [d[0] * n, d[1] * n, d[2] * n];
-    // The source becomes air, then the blocks land: a target wins over air.
-    let mut target: HashMap<Pos, String> = boxed(lo, hi).map(|q| (q, "minecraft:air".to_owned())).collect();
+    // The source becomes the fill, then the blocks land: a target wins.
+    let mut target: HashMap<Pos, String> = e.fill_with(boxed(lo, hi), &fill).into_iter().collect();
     for q in boxed(lo, hi) {
         if let Some(b) = region.get(q[0], q[1], q[2])
             && !(f.contains('a') && is_air(b))
