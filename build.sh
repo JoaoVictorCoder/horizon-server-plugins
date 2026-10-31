@@ -25,7 +25,9 @@ if [ ! -f "$WORK/.patched" ]; then
   cp -r "$ROOT/host" "$WORK/crates/horizon-plugin-host"
   sed -i.bak 's|path = "../api"|path = "../horizon-plugin-api"|' "$WORK/crates/horizon-plugin-host/Cargo.toml"
   rm -f "$WORK/crates/horizon-plugin-host/Cargo.toml.bak"
-  (cd "$WORK" && git apply "$ROOT/engine/horizon.patch")
+  # .build/ is inside this repository: without the ceiling, git apply would take this repository as its
+  # root and silently skip every path of the patch.
+  (cd "$WORK" && GIT_CEILING_DIRECTORIES="$ROOT/.build" git apply "$ROOT/engine/horizon.patch")
   touch "$WORK/.patched"
 else
   # The plugin crates may have changed since: copy them again.
