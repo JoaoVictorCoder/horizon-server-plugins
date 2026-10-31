@@ -66,6 +66,8 @@ struct Job {
     commands: Vec<String>,
     next: usize,
     changed: usize,
+    /// Commands the world refused (unloaded chunks...).
+    failed: usize,
 }
 
 #[derive(Default)]
@@ -141,6 +143,9 @@ impl Pattern {
         if out.is_empty() {
             return Err("No block given.".into());
         }
+        for (b, _) in &out {
+            check_block(b)?;
+        }
         Ok(Pattern(out))
     }
 
@@ -162,6 +167,50 @@ impl Pattern {
         }
         &self.0[0].0
     }
+}
+
+/// Blocks renamed since older versions, as players still type them.
+const RENAMED: &[(&str, &str)] = &[
+    ("grass", "short_grass"),
+    ("grass_path", "dirt_path"),
+    ("snow_layer", "snow"),
+    ("web", "cobweb"),
+    ("planks", "oak_planks"),
+    ("log", "oak_log"),
+    ("wool", "white_wool"),
+    ("stained_glass", "white_stained_glass"),
+    ("concrete", "white_concrete"),
+];
+
+/// An error for a block the server doesn't have, with what was meant.
+fn check_block(state: &str) -> Result<(), String> {
+    let kind = kind_of(state);
+    if server().block_exists(kind) != Some(false) {
+        return Ok(());
+    }
+    let bare = kind.trim_start_matches("minecraft:");
+    let hint = RENAMED
+        .iter()
+        .find(|(old, _)| *old == bare)
+        .map(|(_, new)| (*new).to_owned())
+        .or_else(|| {
+            [format!("{bare}_block"), format!("short_{bare}"), format!("{bare}s")]
+                .into_iter()
+                .find(|c| server().block_exists(c) == Some(true))
+        });
+    Err(match hint {
+        Some(h) => format!("Unknown block: {bare}. Did you mean {h}?"),
+        None => format!("Unknown block: {bare}"),
+    })
+}
+
+/// Block ids for a mask, each checked.
+fn mask_of(text: &str) -> Result<Vec<String>, String> {
+    let mask: Vec<String> = text.split(',').filter(|m| !m.is_empty()).map(block_id).collect();
+    for m in &mask {
+        check_block(m)?;
+    }
+    Ok(mask)
 }
 
 /// A mask for `//replace`: block ids, matched with or without their state.
@@ -346,6 +395,7 @@ impl HorizonEdit {
                 commands,
                 next: 0,
                 changed: changes.len(),
+                failed: 0,
             });
         }
     }
@@ -359,14 +409,24 @@ impl HorizonEdit {
             };
             let end = (job.next + budget).min(job.commands.len());
             for c in &job.commands[job.next..end] {
-                ctx.server().dispatch_command(c);
+                if !ctx.server().dispatch_command(c) {
+                    job.failed += 1;
+                }
             }
             budget -= end - job.next;
             job.next = end;
             if job.next == job.commands.len() {
                 let job = self.jobs.pop_front().expect("front");
                 if let Some(p) = ctx.server().player_by_uuid(job.owner) {
-                    msg(&p, &format!("{} blocks changed.", job.changed));
+                    if job.failed == 0 {
+                        msg(&p, &format!("{} blocks changed.", job.changed));
+                    } else {
+                        p.send_message(&format!(
+                            "§c{} of {} block writes failed (is that area loaded?). See the server log.",
+                            job.failed,
+                            job.commands.len()
+                        ));
+                    }
                 }
             }
         }
@@ -473,7 +533,7 @@ fn set(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, args: &[Stri
 fn replace(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, args: &[String]) -> Result<(), String> {
     let (mask, to) = match args {
         [to] => (None, to),
-        [from, to] => (Some(from.split(',').map(block_id).collect::<Vec<_>>()), to),
+        [from, to] => (Some(mask_of(from)?), to),
         _ => return Err("Usage: //replace [from] <to>".into()),
     };
     let pattern = Pattern::parse(to)?;
@@ -726,12 +786,7 @@ fn move_cmd(e: &mut HorizonEdit, ctx: &mut Ctx<HorizonEdit>, p: &Player, args: &
 }
 
 fn count(e: &mut HorizonEdit, _: &mut Ctx<HorizonEdit>, p: &Player, args: &[String]) -> Result<(), String> {
-    let mask: Vec<String> = args
-        .first()
-        .ok_or("Usage: //count <block>")?
-        .split(',')
-        .map(block_id)
-        .collect();
+    let mask = mask_of(args.first().ok_or("Usage: //count <block>")?)?;
     let (lo, hi) = e.selection(p)?;
     let region = e.read(p, lo, hi)?;
     let n = boxed(lo, hi)
@@ -891,11 +946,17 @@ impl Plugin for HorizonEdit {
     fn on_enable(&mut self, ctx: &mut Ctx<Self>) {
         ctx.save_default_config(CONFIG);
         for &(name, usage, description, run) in COMMANDS {
+            // `//wand` and `/wand` both work (a name vanilla has, such as
+            // /help or /rotate, stays vanilla's with one slash).
+            let mut spec = CommandSpec::new(name)
+                .description(description)
+                .usage(usage)
+                .permission(PERMISSION);
+            if let Some(bare) = name.strip_prefix('/') {
+                spec = spec.alias(bare);
+            }
             ctx.command(
-                CommandSpec::new(name)
-                    .description(description)
-                    .usage(usage)
-                    .permission(PERMISSION),
+                spec,
                 move |plugin, ctx, sender, _, args| {
                     let Some(p) = sender.player() else {
                         sender.send_message("HorizonEdit's commands are for players.");

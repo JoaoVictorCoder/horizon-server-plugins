@@ -408,10 +408,10 @@ index 598c794..d499943 100644
              self.native_feedback(
 diff --git a/crates/horizon-client/src/game/plugins.rs b/crates/horizon-client/src/game/plugins.rs
 new file mode 100644
-index 0000000..5ccdb66
+index 0000000..f4b29f7
 --- /dev/null
 +++ b/crates/horizon-client/src/game/plugins.rs
-@@ -0,0 +1,944 @@
+@@ -0,0 +1,963 @@
 +//! Server plugins (docs/plugins.md): a dedicated server loads the plugin
 +//! libraries in `plugins/` with `horizon-plugin-host` when its world is
 +//! ready, and hands them what the native hook points hear, at the same
@@ -424,7 +424,7 @@ index 0000000..5ccdb66
 +//! wait for the next tick here, and console commands in the host.
 +
 +use super::{
-+    Game, LevelDimension,
++    Dim, Game, LevelDimension,
 +    native_lifecycle::NativeLifecycleContext,
 +    native_server::{NativeCommand, NativeServerPlayer},
 +};
@@ -576,6 +576,9 @@ index 0000000..5ccdb66
 +        p.location = p.location.with_rotation(self.game.yaw, self.game.pitch);
 +        Some(p)
 +    }
++    fn block_exists(&self, id: &str) -> Option<bool> {
++        Some(self.game.pack.assets.registry.default_state(id).is_some())
++    }
 +    fn entities(&self, world: &str, kind: Option<&str>) -> Vec<Entity> {
 +        if world != self.game.dim.id() {
 +            return Vec::new();
@@ -620,7 +623,23 @@ index 0000000..5ccdb66
 +        self.game.lan_acting.is_none() && self.game.lan.is_some()
 +    }
 +    fn console_command(&mut self, line: &str) -> bool {
-+        self.game.native_run_command(line)
++        // Between levels' ticks the level in place is whichever ticked last,
++        // and `execute in` doesn't swap levels for the blocks it changes:
++        // put the command's level (the overworld when it names none) in
++        // place for it, then the one that was.
++        let target = line
++            .strip_prefix("execute in ")
++            .and_then(|rest| rest.split_whitespace().next())
++            .map_or(Dim::Overworld, Dim::from_id);
++        let back = self.game.dim;
++        if target != back && self.game.enter_level(None, target).is_err() {
++            return false;
++        }
++        let ok = self.game.native_run_command(line);
++        if self.game.dim != back {
++            let _ = self.game.enter_level(None, back);
++        }
++        ok
 +    }
 +    fn block(&self, pos: &BlockPos) -> Option<Block> {
 +        let at = [pos.x, pos.y, pos.z];

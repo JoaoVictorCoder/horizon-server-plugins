@@ -101,6 +101,14 @@ impl Server {
             .and_then(Value::to_text)
             .unwrap_or_default()
     }
+    /// Whether a block named `id` exists (`stone`, `minecraft:short_grass`;
+    /// a state's `[...]` is not checked). None when the server can't tell.
+    pub fn block_exists(&self, id: &str) -> Option<bool> {
+        let id = crate::types::namespaced(id.split('[').next().unwrap_or(id));
+        call("block_exists", Value::map().with("id", id))
+            .ok()
+            .and_then(|v| v.as_bool())
+    }
     /// Server ticks since the world opened.
     pub fn current_tick(&self) -> i64 {
         self.info().get("tick").and_then(Value::as_i64).unwrap_or(0)

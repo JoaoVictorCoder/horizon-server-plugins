@@ -68,6 +68,12 @@ pub trait Backend {
         let _ = (world, kind);
         Vec::new()
     }
+    /// Whether a block named `id` (`minecraft:stone`) exists; None when
+    /// the server can't tell.
+    fn block_exists(&self, id: &str) -> Option<bool> {
+        let _ = id;
+        None
+    }
     /// The server's version, for `/version` and `Server::version`.
     fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_owned()
@@ -1096,7 +1102,12 @@ impl Shared {
         }
         let b = self.backend()?;
         if b.can_run_commands() {
-            Ok(b.console_command(line))
+            let ok = b.console_command(line);
+            if !ok {
+                let who = from.map_or_else(|| "Plugins".to_owned(), |i| self.plugin_name(i));
+                self.log("WARN", &format!("[{who}] `{line}` failed"));
+            }
+            Ok(ok)
         } else {
             self.deferred
                 .borrow_mut()
@@ -1392,6 +1403,7 @@ impl Shared {
                     )?)
                 }
             }
+            "block_exists" => self.backend()?.block_exists(&text("id")).to_wire(),
             "entities" => {
                 let kind = args.get("type").and_then(Value::to_text);
                 self.backend()?
