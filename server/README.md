@@ -1,8 +1,8 @@
-# Pasta do servidor
+# Server folder
 
-1. `cp ../dist/plugins/* plugins/` (depois de `../build.sh`).
-2. `./iniciar.sh --initSettings` cria `server.properties` e `eula.txt`.
-3. Aceite o EULA da Mojang (`eula=true`) e ajuste o `server.properties`.
-4. `./iniciar.sh`. Comandos no próprio terminal; `stop` para desligar.
+1. `cp ../dist/plugins/* plugins/` (after `../build.sh`).
+2. `./iniciar.sh --initSettings` writes `server.properties` and `eula.txt`.
+3. Accept Mojang's EULA (`eula=true`) and adjust `server.properties`.
+4. `./iniciar.sh` starts the server. Type commands in the terminal; `stop` shuts it down.
 
-O mundo, as configs dos plugins (`plugins/<Nome>/`) e o `plugins/permissions.yml` ficam aqui e não vão para o git.
+The world, the plugins' settings (`plugins/<Name>/`) and `plugins/permissions.yml` live here and stay out of git.

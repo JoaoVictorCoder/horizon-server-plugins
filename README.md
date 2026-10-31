@@ -1,67 +1,68 @@
 # Horizon Server Plugins
 
-Servidor de **Minecraft: Java Edition 26.3** em Rust com suporte a **plugins no estilo Paper**, construído em cima
-do [Horizon](https://github.com/horizon-rust/horizon), de **Ludovic Marie e contribuidores**.
+A **Minecraft: Java Edition 26.3** server in Rust with **Paper-style plugins**, built on
+[Horizon](https://github.com/horizon-rust/horizon) by **Ludovic Marie and the Horizon contributors**.
 
-> Este repositório tem **só a parte do servidor**: a API de plugins, o host que carrega `plugins/`, os plugins de
-> exemplo e um patch pequeno no motor do Horizon. O jogo, o motor do servidor e todo o resto são do Horizon
-> ([créditos](CREDITS.md)). Bugs do próprio Horizon vão para o [repositório deles](https://github.com/horizon-rust/horizon/issues).
+> This repository holds **only the server side**: the plugin API, the host that loads `plugins/`, example
+> plugins, and a small patch to Horizon's engine. The game, the server engine and everything else are Horizon's
+> ([credits](CREDITS.md)). Report Horizon's own bugs to [its repository](https://github.com/horizon-rust/horizon/issues).
 
-## O que tem
+## What's in it
 
-- **Plugins em Rust** com cara de Paper: `plugin.yml`, `on_enable`/`on_disable`, eventos com prioridade e
-  cancelamento, comandos com permissão e tab-complete, scheduler em ticks, `config.yml`, cores `&a`/`§a`.
-- **`plugins/permissions.yml`**: grupos, herança, `-permissao` para negar, curingas `homes.*`.
-- **`/plugins`** e **`/plugins reload`**: recarrega plugins e configs sem reiniciar.
-- **Eventos**: entrar/sair (com a mensagem), mover, morrer, chat, cliques, quebrar/colocar blocos, baldes,
-  ataques, spawn e morte de mobs, explosões, líquidos e fogo, pistões, menus de baú, ticks.
-- **Plugins de exemplo** (`api/examples/`):
-  - **Homes**: `/sethome`, `/home`, `/delhome`, `/homes` (menu), proteção do spawn.
-  - **Dragão**: `/dragao [cor]` constrói um dragãozinho de blocos.
-  - **HorizonEdit**: os comandos do WorldEdit (`//wand`, `//set`, `//replace`, `//copy`, `//paste`, `//rotate`,
-    `//undo`, `//sphere`, `//stack`...), escritos do zero.
+- **Rust plugins** shaped like Paper's: `plugin.yml`, `on_enable`/`on_disable`, events with priorities and
+  cancelling, commands with permissions and tab completion, a tick scheduler, `config.yml`, `&a`/`§a` colours.
+- **`plugins/permissions.yml`**: groups, inheritance, `-permission` to deny, `homes.*` wildcards.
+- **`/plugins`** and **`/plugins reload`**: reload plugins and their configs without a restart.
+- **Events**: join/quit (with their messages), move, death, chat, clicks, block break/place, buckets, attacks,
+  mob spawns and deaths, explosions, fluids and fire, pistons, chest menus, ticks.
+- **Example plugins** (`api/examples/`):
+  - **Homes**: `/sethome`, `/home`, `/delhome`, `/homes` (a menu), spawn protection.
+  - **Dragão**: `/dragao [colour]` (or `/dragon`) builds a little dragon out of blocks.
+  - **HorizonEdit**: WorldEdit's commands (`//wand`, `//set`, `//replace`, `//copy`, `//paste`, `//rotate`,
+    `//undo`, `//sphere`, `//stack`...), written from scratch.
 
-Documentação completa da API: [docs/plugins.md](docs/plugins.md).
+Full API documentation: [docs/plugins.md](docs/plugins.md).
 
-Os `.jar` do Paper **não** rodam aqui: eles são bytecode Java feito para as classes do Bukkit. Um plugin do
-Paper se porta para esta API quase linha por linha (veja a tabela em `docs/plugins.md`).
+Paper `.jar` files do **not** run here: they are Java bytecode written against Bukkit's classes. A Paper plugin
+ports to this API almost line for line (see the table in `docs/plugins.md`).
 
-## Compilar o servidor
+## Building the server
 
-Precisa de [Rust](https://rustup.rs), `curl`, `tar`, `git` e um compilador C.
+You need [Rust](https://rustup.rs), `curl`, `tar`, `git` and a C compiler.
 
 ```sh
 ./build.sh
 ```
 
-O script baixa o Horizon no commit de `engine/HORIZON_COMMIT`, junta as crates de plugins, aplica
-`engine/horizon.patch` e compila só o servidor (sem som nem controle). Resultado:
+The script downloads Horizon at the commit in `engine/HORIZON_COMMIT`, adds the plugin crates, applies
+`engine/horizon.patch` and compiles only the server (no sound, no controllers). The result:
 
-- `dist/horizon-server-engine`: o servidor;
-- `dist/plugins/`: os plugins de exemplo.
+- `dist/horizon-server-engine`: the server;
+- `dist/plugins/`: the example plugins.
 
-A primeira compilação demora (uns 10 minutos); as seguintes são rápidas.
+The first build takes a while (about 10 minutes); later ones are quick.
 
-## Rodar
+## Running it
 
-1. **Arquivos do jogo.** O servidor precisa dos dados do 26.3 preparados a partir da **sua** cópia do Minecraft;
-   nada da Mojang é distribuído aqui. O jeito fácil: instale o [launcher do Horizon](https://playhorizon.dev) e
-   jogue uma vez. Ele deixa os arquivos em
+1. **Game files.** The server needs the 26.3 data, prepared from **your own** copy of Minecraft; nothing of
+   Mojang's is distributed here. The easy way: install the [Horizon launcher](https://playhorizon.dev) and play
+   once. It leaves the files in
    `~/.local/share/horizon-launcher/server-runtime/game-files/horizon-client/26.3`.
-   Detalhes: [hosting.md do Horizon](https://github.com/horizon-rust/horizon/blob/main/docs/hosting.md).
-2. **Pasta do servidor.** `server/` já tem o `iniciar.sh`. Copie os plugins que quiser para `server/plugins/`:
+   Details: [Horizon's hosting.md](https://github.com/horizon-rust/horizon/blob/main/docs/hosting.md).
+2. **Server folder.** `server/` already has `iniciar.sh` (the start script). Copy the plugins you want into
+   `server/plugins/`:
 
    ```sh
    cp dist/plugins/* server/plugins/
-   cd server && ./iniciar.sh --initSettings   # cria server.properties e eula.txt
+   cd server && ./iniciar.sh --initSettings   # writes server.properties and eula.txt
    ```
 
-   Leia e aceite o EULA da Mojang em `eula.txt` (`eula=true`) e ajuste o `server.properties`.
-3. **Iniciar.** `./iniciar.sh`. O console é o próprio terminal: `op SeuNome`, `plugins`, `stop`...
+   Read and accept Mojang's EULA in `eula.txt` (`eula=true`) and adjust `server.properties`.
+3. **Start.** `./iniciar.sh`. The console is the terminal itself: `op YourName`, `plugins`, `stop`...
 
-Outra pasta de jogo: `RESOURCES=/caminho/26.3 ./iniciar.sh`.
+Game files elsewhere: `RESOURCES=/path/to/26.3 ./iniciar.sh`.
 
-## Escrever um plugin
+## Writing a plugin
 
 ```toml
 [lib]
@@ -75,36 +76,36 @@ horizon-plugin-api = { git = "https://github.com/JoaoVictorCoder/horizon-server-
 use horizon_plugin_api::prelude::*;
 
 #[derive(Default)]
-struct Ola;
+struct Hello;
 
-impl Plugin for Ola {
+impl Plugin for Hello {
     fn on_enable(&mut self, ctx: &mut Ctx<Self>) {
         ctx.on(|_, _, e: &mut PlayerJoinEvent| {
-            e.player.send_message(&color::translate('&', "&aBem-vindo!"));
+            e.player.send_message(&color::translate('&', "&aWelcome!"));
         });
     }
 }
 
-horizon_plugin!(Ola, PluginDescription::new("Ola", "1.0.0"));
+horizon_plugin!(Hello, PluginDescription::new("Hello", "1.0.0"));
 ```
 
-`cargo build --release` gera `libola.so`, que vai em `plugins/`. Para testar sem servidor:
+`cargo build --release` makes `libhello.so`, which goes in `plugins/`. To try plugins without a server:
 
 ```sh
-cargo run -p horizon-plugin-host --example plugin_dry_run -- pasta/com/plugins "comando arg"
+cargo run -p horizon-plugin-host --example plugin_dry_run -- path/to/plugins "command arg"
 ```
 
-## Estrutura
+## Layout
 
-| Pasta | O que é |
+| Folder | What it is |
 |---|---|
-| `api/` | `horizon-plugin-api`: a API dos plugins (sem dependências, ABI em C) e os exemplos |
-| `host/` | `horizon-plugin-host`: carrega `plugins/`, eventos, comandos, permissões, reload |
-| `engine/` | `horizon.patch` (as mudanças no motor do Horizon) e o commit em que ele se aplica |
-| `server/` | a pasta do servidor, com `iniciar.sh` |
-| `docs/plugins.md` | a documentação da API |
+| `api/` | `horizon-plugin-api`: the plugin API (no dependencies, a C ABI) and the examples |
+| `host/` | `horizon-plugin-host`: loads `plugins/`, events, commands, permissions, reload |
+| `engine/` | `horizon.patch` (the changes to Horizon's engine) and the commit it applies to |
+| `server/` | the server folder, with `iniciar.sh` |
+| `docs/plugins.md` | the API documentation |
 
-## Licença e créditos
+## License and credits
 
-MIT, como o Horizon. Veja [LICENSE](LICENSE) e [CREDITS.md](CREDITS.md). Minecraft é marca da Mojang Studios;
-este projeto não tem ligação com a Mojang, a Microsoft, o Horizon, o Paper ou o WorldEdit.
+MIT, like Horizon. See [LICENSE](LICENSE) and [CREDITS.md](CREDITS.md). Minecraft is a trademark of Mojang
+Studios; this project is not affiliated with Mojang, Microsoft, Horizon, Paper or WorldEdit.
