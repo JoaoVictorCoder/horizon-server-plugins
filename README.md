@@ -18,13 +18,9 @@ A **Minecraft: Java Edition 26.3** server in Rust with **Paper-style plugins**, 
 - **Example plugins** (`api/examples/`):
   - **Homes**: `/sethome`, `/home`, `/delhome`, `/homes` (a menu), spawn protection.
   - **Dragão**: `/dragao [colour]` (or `/dragon`) builds a little dragon out of blocks.
-  - **HorizonEdit**: most of WorldEdit's commands, written from scratch (no WorldEdit code): the wand,
-    `//hpos1`, `//chunk`, `//set`, `//replace`, `//overlay`, `//naturalize`, `//smooth`, `//hollow`, `//line`,
-    `//forest`, `//sphere`, `//cyl`, `//pyramid`, `//generate` (expressions), `//copy`/`//paste`/`//rotate`/
-    `//flip`, schematics (`//schem save|load`), `//undo`/`//redo`, `//fill`, `//drain`, `//snow`, `//butcher`,
-    `//calc`, `/ascend`, `/jumpto`, `/thru`, brushes (`/brush sphere|cylinder|smooth|clipboard`), tools
-    (`/tool tree|repl|info`), the super pickaxe (`/sp`), masks (`//gmask`) and `//limit`. `//help` lists them.
-    Not there: `//regen`, biomes and snapshots, which need more of the engine than plugins reach.
+- **Plugins built on it**, in their own repositories:
+  - **[HorizonEdit](https://github.com/JoaoVictorCoder/horizonedit)**: most of WorldEdit's commands, written
+    from scratch (no WorldEdit code).
 
 Full API documentation: [docs/plugins.md](docs/plugins.md).
 
@@ -35,12 +31,8 @@ ports to this API almost line for line (see the table in `docs/plugins.md`).
 
 Next up (the full list: [TODO.md](TODO.md)):
 
-- Fix the HorizonEdit block writes that fail underground on a real server.
-- Parity tests against the real WorldEdit, compared block by block.
 - An automatic end-to-end test: a server, a bot and a plugin.
 - More of the API: chunk events, block states, block entity data (chest contents), entities by handle.
-- What HorizonEdit still lacks from WorldEdit: `/tool cycler`, biomes and `//regen`, `.schem` files, non-cuboid
-  selections.
 - A converter that helps port Paper plugins to this API.
 - GitHub releases with built servers and plugins, and CI.
 

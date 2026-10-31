@@ -44,7 +44,7 @@ mkdir -p dist/plugins
 BIN=horizon-client
 [ "$EXT" = dll ] && BIN=horizon-client.exe
 cp "$WORK/target/release/$BIN" "dist/horizon-server-engine$( [ "$EXT" = dll ] && echo .exe || true)"
-for p in homes dragao horizonedit; do
+for p in homes dragao; do
   for f in "$WORK/target/release/examples/lib$p.$EXT" "$WORK/target/release/examples/$p.$EXT"; do
     [ -f "$f" ] && cp "$f" dist/plugins/
   done

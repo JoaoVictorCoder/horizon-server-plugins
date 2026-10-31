@@ -23,9 +23,3 @@ crate-type = ["cdylib"]
 name = "dragao"
 path = "examples/dragao/main.rs"
 crate-type = ["cdylib"]
-
-# HorizonEdit: WorldEdit's commands (`//set`, `//copy`, `//undo`...), written anew for this API.
-[[example]]
-name = "horizonedit"
-path = "examples/horizonedit/main.rs"
-crate-type = ["cdylib"]

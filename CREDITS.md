@@ -21,7 +21,7 @@ By **JoaoVictorCoder**, written with Claude Code (an AI coding agent):
 - `api/` (`horizon-plugin-api`): the API plugins are written against, and its C ABI.
 - `host/` (`horizon-plugin-host`): loading `plugins/`, events, commands, permissions, reload.
 - `engine/horizon.patch`: `game/plugins.rs` and small calls beside Horizon's own hook points.
-- Example plugins in `api/examples/`: Homes, Dragão, HorizonEdit.
+- Example plugins in `api/examples/`: Homes, Dragão.
 
 ## Projects whose design it follows
 
@@ -29,8 +29,6 @@ No code from these projects is included. The plugin API follows their designs, w
 
 - **Bukkit / Spigot / [Paper](https://papermc.io)**: `plugin.yml`, events and priorities, the scheduler,
   permissions and their defaults, command executors.
-- **[WorldEdit](https://enginehub.org/worldedit)** by EngineHub: the commands HorizonEdit offers (`//set`,
-  `//copy`, `//undo`...). HorizonEdit is written anew; WorldEdit's code (GPL) is not used.
 
 ## Minecraft
 

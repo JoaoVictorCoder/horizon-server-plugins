@@ -171,7 +171,7 @@ h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); letter-spacing: -.025em; margin: 0
 .ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* examples */
-.examples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.examples { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 @media (max-width: 900px) { .examples { grid-template-columns: 1fr; } }
 .example { display: flex; flex-direction: column; }
 .example .tag { font: 600 .75rem "JetBrains Mono", monospace; color: var(--rust); }
@@ -345,7 +345,7 @@ footer a { color: var(--muted); }
       <div class="card">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M20 7 9 18l-5-5"/></svg></div>
         <h3>The usual extras, built in</h3>
-        <p>Permission groups, reloading plugins at runtime and WorldEdit-style editing come with it. On Paper, each of those is a separate plugin.</p>
+        <p>Permission groups and reloading plugins at runtime come with it. On Paper, each of those is a separate plugin.</p>
       </div>
       <div class="card">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></div>
@@ -367,7 +367,7 @@ footer a { color: var(--muted); }
           <tr><td>Plugin language</td><td>Java / Kotlin</td><td class="yes">Rust</td></tr>
           <tr><td>Permission groups</td><td>Extra plugin (e.g. LuckPerms)</td><td class="yes">Built in: <code>permissions.yml</code></td></tr>
           <tr><td>Reloading plugins</td><td><code>/reload</code> is unsupported and discouraged</td><td class="yes"><code>/plugins reload</code>, plugins and configs</td></tr>
-          <tr><td>World editing</td><td>Extra plugin (WorldEdit)</td><td class="yes">HorizonEdit example included</td></tr>
+          <tr><td>World editing</td><td>Extra plugin (WorldEdit)</td><td>Extra plugin (<a href="https://github.com/JoaoVictorCoder/horizonedit">HorizonEdit</a>)</td></tr>
           <tr><td>Plugin ecosystem</td><td class="yes">Thousands of plugins</td><td>New: the examples and what you write</td></tr>
         </tbody>
       </table>
@@ -386,12 +386,6 @@ footer a { color: var(--muted); }
         <h3>Homes</h3>
         <p>Set homes and go back to them, with a chest menu to pick one, a limit from <code>config.yml</code> and a protected spawn.</p>
         <div class="cmds"><code>/sethome</code><code>/home</code><code>/delhome</code><code>/homes</code></div>
-      </div>
-      <div class="card example">
-        <span class="tag">api/examples/horizonedit</span>
-        <h3>HorizonEdit</h3>
-        <p>WorldEdit's commands, rewritten in Rust: selections, fills, copy and paste, rotation, shapes and undo.</p>
-        <div class="cmds"><code>//wand</code><code>//set</code><code>//replace</code><code>//copy</code><code>//paste</code><code>//rotate</code><code>//sphere</code><code>//stack</code><code>//undo</code></div>
       </div>
       <div class="card example">
         <span class="tag">api/examples/dragao</span>
