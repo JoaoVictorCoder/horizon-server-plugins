@@ -176,7 +176,13 @@ They come from the native mods' hook points (Horizon's docs/native-mods.md), at 
 - **Where players look**: `player.location.yaw`, `pitch` and `facing()`.
 - Many `Player` and `World` methods run vanilla commands: `set_game_mode`, `send_title`, `play_sound`,
   `add_effect`, `spawn_entity`, `spawn_particle`, `set_time`, `set_weather`, `create_explosion`.
-- **Threads**: the server is only reachable on its thread. From `run_async`, come back with the `SyncHandle`.
+- **Threads**: a `run_async` thread reaches the server like the server's own thread does (`server()`,
+  `player.send_message`...); each call waits for the next tick's start or end, where the server's thread answers
+  it (`callSyncMethod`). For threads the plugin starts itself, run their code in `sync.attach(|| ...)`. For many
+  calls at once, or to change the plugin's state, send one closure back with `sync.run(|plugin, ctx| ...)`.
+  Registering listeners and commands stays on the server's thread. Never make the server's thread wait for such
+  a thread (joining it, a lock it holds): its call waits in turn, and fails after 10 s. Once the plugin is
+  disabled, its threads' calls fail at once.
 - **ABI**: plugins talk to the server through a C ABI with JSON messages (`horizon_plugin_api::abi`). A plugin
   built with any Rust loads in any server of the same ABI version (now 1).
 

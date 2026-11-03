@@ -5,13 +5,15 @@
 //! Every callback gets the plugin itself (`&mut P`) and its `Ctx`, so
 //! listeners and tasks reach the plugin's state with no `Rc`. Callbacks run
 //! on the server's thread; a panic in one is caught, logged, and the
-//! server goes on.
+//! server goes on. Work for other threads goes through
+//! [`Ctx::run_async`]; from there the server is reachable too, each call
+//! waiting for the next tick, and [`SyncHandle::run`] brings work back.
 
 use crate::abi::{self, ABI_VERSION, HostApi, PluginApi, RawBuf, RawStr};
 use crate::config::Config;
 use crate::description::{CommandSpec, PluginDescription};
 use crate::event::{Event, EventPriority};
-use crate::server::{Logger, Server, call, server, with_host};
+use crate::server::{Logger, Server, call, current_host, server, with_host};
 use crate::types::{CommandSender, Wire};
 use crate::value::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -91,11 +93,23 @@ pub struct Ctx<P> {
     tick: u64,
     inbox: Inbox<P>,
     current_task: Option<TaskId>,
+    host: HostPtr,
 }
+
+/// The plugin's `HostApi`, for its own threads. The server never frees it
+/// and answers its `call` from any thread (abi.rs).
+#[derive(Clone, Copy)]
+struct HostPtr(*const HostApi);
+
+// SAFETY: only handed to `with_host`, which only reads the `HostApi`
+// through `call`; the server makes that safe from any thread.
+unsafe impl Send for HostPtr {}
+unsafe impl Sync for HostPtr {}
 
 impl<P: Plugin> Ctx<P> {
     fn new(description: PluginDescription) -> Self {
         Ctx {
+            host: HostPtr(current_host()),
             description,
             data_folder: PathBuf::new(),
             config: None,
@@ -267,14 +281,16 @@ impl<P: Plugin> Ctx<P> {
         self.pending.push(Pending::CancelAll);
     }
 
-    /// Runs `work` on a thread of its own (`runTaskAsynchronously`); it
-    /// comes back to the server's thread through its [`SyncHandle`].
+    /// Runs `work` on a thread of its own (`runTaskAsynchronously`). The
+    /// server is reachable from there (`server()`, `player.send_message`),
+    /// each call waiting for the next tick ([`call`](crate::server::call));
+    /// work for the plugin's state goes back through its [`SyncHandle`].
     pub fn run_async(&mut self, work: impl FnOnce(SyncHandle<P>) + Send + 'static) {
         let handle = self.sync_handle();
         let name = format!("{} async", self.description.name);
         let spawned = std::thread::Builder::new()
             .name(name)
-            .spawn(move || work(handle));
+            .spawn(move || handle.clone().attach(|| work(handle)));
         if let Err(e) = spawned {
             self.logger()
                 .severe(&format!("could not start a thread: {e}"));
@@ -285,6 +301,7 @@ impl<P: Plugin> Ctx<P> {
     pub fn sync_handle(&self) -> SyncHandle<P> {
         SyncHandle {
             inbox: Arc::clone(&self.inbox),
+            host: self.host,
         }
     }
 
@@ -340,24 +357,38 @@ impl<P: Plugin> Ctx<P> {
 }
 
 /// Sends work back to the server's thread from any thread, where it runs
-/// at the next tick with the plugin and its `Ctx`.
+/// at the next tick with the plugin and its `Ctx`, and lets other threads
+/// reach the server ([`attach`](Self::attach)).
 pub struct SyncHandle<P> {
     inbox: Inbox<P>,
+    host: HostPtr,
 }
 
 impl<P> Clone for SyncHandle<P> {
     fn clone(&self) -> Self {
         SyncHandle {
             inbox: Arc::clone(&self.inbox),
+            host: self.host,
         }
     }
 }
 
 impl<P> SyncHandle<P> {
+    /// Runs `work` on the server's thread at the next tick, with the plugin
+    /// and its `Ctx`: the way to change the plugin's state, or to make many
+    /// server calls at once, from another thread.
     pub fn run(&self, work: impl FnOnce(&mut P, &mut Ctx<P>) + Send + 'static) {
         if let Ok(mut inbox) = self.inbox.lock() {
             inbox.push(Box::new(work));
         }
+    }
+
+    /// Runs `f` on this thread with the server reachable from it, as on a
+    /// [`Ctx::run_async`] thread: for threads the plugin starts itself (a
+    /// pool, a socket's). Each call waits for the next tick
+    /// ([`call`](crate::server::call)).
+    pub fn attach<R>(&self, f: impl FnOnce() -> R) -> R {
+        with_host(self.host.0, f)
     }
 }
 

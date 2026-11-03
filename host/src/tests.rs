@@ -660,3 +660,90 @@ fn commands_complete_and_joins_carry_messages() {
     assert!(mock.logs.iter().any(|l| l.contains("Disabling Guard")));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// Calls the server from threads of its own.
+#[derive(Default)]
+struct Courier {
+    back: bool,
+}
+
+static COURIER_SAW: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static COURIER_HANDLE: Mutex<Option<SyncHandle<Courier>>> = Mutex::new(None);
+
+fn courier_saw(line: String) {
+    lock(&COURIER_SAW).push(line);
+}
+
+impl Plugin for Courier {
+    fn on_enable(&mut self, ctx: &mut Ctx<Self>) {
+        *lock(&COURIER_HANDLE) = Some(ctx.sync_handle());
+        ctx.run_async(|handle| {
+            let players = server().online_players();
+            let got = server().broadcast_message("from a thread");
+            courier_saw(format!("players {} broadcast {got}", players.len()));
+            let raw = horizon_plugin_api::server::call("register_listener", Value::map());
+            courier_saw(format!("register {}", raw.unwrap_err()));
+            handle.run(|plugin, ctx| {
+                plugin.back = true;
+                ctx.logger().info("back on the server's thread");
+            });
+        });
+        ctx.command(CommandSpec::new("courier"), |plugin, _, sender, _, _| {
+            sender.send_message(&format!("back {}", plugin.back));
+            true
+        });
+    }
+}
+
+unsafe extern "C" fn courier_entry(host: *const HostApi) -> PluginApi {
+    unsafe { runtime::entry(host, Courier::default, || PluginDescription::new("Courier", "1")) }
+}
+
+#[test]
+fn plugin_threads_reach_the_server() {
+    let dir = std::env::temp_dir().join(format!("hz-plugins-threads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut mock = Mock::default();
+    mock.players = vec![player("Alex", 1, 0)];
+    let host = PluginHost::new(&dir);
+    host.load_entries(&mut mock, vec![(courier_entry as EntryFn, "courier".into())]);
+    host.enable(&mut mock, None);
+
+    // The thread's calls are answered at the ticks, one after another.
+    for t in 1..=400 {
+        host.tick_start(&mut mock, t);
+        host.tick_end(&mut mock, t);
+        if lock(&COURIER_SAW).len() >= 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    host.tick_start(&mut mock, 500);
+    let saw = lock(&COURIER_SAW).clone();
+    assert_eq!(saw[0], "players 1 broadcast 1", "{saw:?}");
+    assert!(saw[1].contains("only from the server's thread"), "{saw:?}");
+    assert!(mock.logs.iter().any(|l| l == "BROADCAST from a thread"));
+    assert!(mock.logs.iter().any(|l| l.ends_with("back on the server's thread")));
+    host.command(&mut mock, CommandSender::Console, "courier");
+    assert!(mock.logs.iter().any(|l| l.ends_with("back true")), "{:?}", mock.logs);
+
+    let handle = lock(&COURIER_HANDLE).clone().unwrap();
+    // A thread that was not attached can't reach it.
+    let plain = std::thread::spawn(|| horizon_plugin_api::server::call("players", Value::map()))
+        .join()
+        .unwrap();
+    assert!(plain.unwrap_err().contains("not reachable from this thread"));
+
+    // Disabled, the plugin's threads get an answer at once: an error.
+    host.disable_all(&mut mock);
+    let started = Instant::now();
+    let late = std::thread::spawn(move || {
+        handle.attach(|| horizon_plugin_api::server::call("players", Value::map()))
+    })
+    .join()
+    .unwrap();
+    assert!(late.unwrap_err().contains("disabled"));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let _ = std::fs::remove_dir_all(&dir);
+}

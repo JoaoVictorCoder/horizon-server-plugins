@@ -9,8 +9,15 @@ use std::cell::Cell;
 
 thread_local! {
     /// The server of the plugin whose code runs now on this thread: set
-    /// for each message the server hands a plugin.
+    /// for each message the server hands a plugin, and for the whole of a
+    /// thread of the plugin's own that [`SyncHandle::attach`](crate::SyncHandle::attach)
+    /// or [`Ctx::run_async`](crate::Ctx::run_async) started.
     static CURRENT: Cell<*const HostApi> = const { Cell::new(std::ptr::null()) };
+}
+
+/// The server reachable from this thread now (null: none).
+pub(crate) fn current_host() -> *const HostApi {
+    CURRENT.with(Cell::get)
 }
 
 /// Makes `host` the current server while `f` runs.
@@ -25,19 +32,28 @@ pub(crate) fn with_host<R>(host: *const HostApi, f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// Calls a server method. Only on the server's thread, inside a message
-/// the server handed the plugin: elsewhere (a thread of the plugin's own)
-/// it fails; use [`SyncHandle`](crate::SyncHandle) to come back.
+/// Calls a server method.
+///
+/// On the server's thread (in a listener, a command, a task) it is
+/// answered at once. On a thread of the plugin's own it works inside
+/// [`Ctx::run_async`](crate::Ctx::run_async) and
+/// [`SyncHandle::attach`](crate::SyncHandle::attach): the call waits for
+/// the server's thread to answer it at the next tick's start or end (up to
+/// 10 s), so each costs up to a tick; for many calls in a row send one
+/// closure with [`SyncHandle::run`](crate::SyncHandle::run) instead. Never
+/// make the server's thread wait for such a thread (joining it, a lock it
+/// holds): its call would wait for the server's thread in turn, and fail
+/// after 10 s.
 pub fn call(method: &str, args: Value) -> Result<Value, String> {
     let host = CURRENT.with(Cell::get);
     if host.is_null() {
         return Err(format!(
-            "`{method}`: the server is only reachable on its own thread (use a SyncHandle)"
+            "`{method}`: the server is not reachable from this thread (start it with ctx.run_async, or run it in a SyncHandle's attach)"
         ));
     }
     let args = args.to_json();
-    // SAFETY: the server keeps its `HostApi` alive until the plugin is
-    // destroyed, and only sets it as current while handing it a message.
+    // SAFETY: the server never frees a `HostApi` it gave a plugin, and
+    // answers its `call` on any thread (abi.rs).
     let reply = unsafe {
         let host = &*host;
         let buf = (host.call)(

@@ -5,8 +5,9 @@
 //! `free`.
 //!
 //! A plugin library exports [`ENTRY_SYMBOL`], an [`EntryFn`]. The server
-//! calls it once with a [`HostApi`] that stays valid until the plugin's
-//! `destroy`, and talks to the plugin through the [`PluginApi`] it returns:
+//! calls it once with a [`HostApi`] it never frees, and talks to the
+//! plugin through the [`PluginApi`] it returns (always from the server's
+//! thread):
 //! `handle(kind, payload)` with a JSON payload, answered with JSON. The
 //! plugin calls back with `HostApi::call(method, args)`, also JSON. Both
 //! answer `{"error": "..."}` on failure.
@@ -102,13 +103,17 @@ pub unsafe extern "C" fn free_buf(buf: RawBuf) {
     }
 }
 
-/// What the server gives a plugin.
+/// What the server gives a plugin. The server never frees it (a plugin's
+/// threads may outlive the plugin), and `call` may come from any thread:
+/// the server answers calls from other threads on its own, waiting, or
+/// with an error once the plugin is disabled.
 #[repr(C)]
 pub struct HostApi {
     pub abi: u32,
     /// The server's own state, passed back to `call`.
     pub ctx: *mut c_void,
-    /// This plugin's number on the server.
+    /// This plugin's number on the server when it was started; passed
+    /// back to `call` (the server may go by `ctx` alone).
     pub plugin: u32,
     /// Calls a server method with JSON arguments; answers JSON, freed with
     /// `free`.

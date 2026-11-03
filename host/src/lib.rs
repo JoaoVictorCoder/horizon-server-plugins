@@ -4,12 +4,18 @@
 //! with permissions, and answers what they ask through a [`Backend`] the
 //! game implements.
 //!
-//! Single-threaded: the host and every call into it stay on the server's
-//! thread. Plugins may call back into the host while it hands them
-//! something (a listener sending a message, running a command); the host
-//! never holds a borrow across a call into a plugin, and a plugin busy in
-//! a call is never handed another (its listeners are skipped, its commands
-//! wait for the next tick).
+//! The host itself is single-threaded: its state and every call it answers
+//! stay on the server's thread. Plugins may call back into the host while
+//! it hands them something (a listener sending a message, running a
+//! command); the host never holds a borrow across a call into a plugin, and
+//! a plugin busy in a call is never handed another (its listeners are
+//! skipped, its commands wait for the next tick).
+//!
+//! A plugin's own threads may call the server too: such a call waits in a
+//! mailbox, the server's thread answers it at the start or end of the next
+//! tick, and the calling thread waits for that answer (up to
+//! [`REMOTE_TIMEOUT`]). A plugin being disabled or unloaded gets no more
+//! answers there: its threads' calls fail at once.
 
 pub mod loader;
 pub mod permissions;
@@ -28,7 +34,18 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::ThreadId;
+use std::time::{Duration, Instant};
+
+/// How long a plugin's own thread waits for the server's thread to answer
+/// a call before the call fails.
+pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long the server's thread spends answering plugins' threads, at a
+/// tick's start and again at its end, before leaving the rest for later.
+const REMOTE_BUDGET: Duration = Duration::from_millis(5);
 
 /// What the game does for plugins. Methods about "the acting player" read
 /// the player whose action or command is being handled, whose state the
@@ -86,8 +103,8 @@ const NO_PERMISSION: &str = "§cI'm sorry, but you do not have permission to per
 struct LoadedPlugin {
     description: PluginDescription,
     api: PluginApi,
-    /// Pointed at by the plugin; kept as long as it.
-    _host_api: Box<HostApi>,
+    /// What its `HostApi` points at.
+    gate: &'static Gate,
     data_folder: PathBuf,
     /// The file it came from, or `built in`.
     source: String,
@@ -97,8 +114,164 @@ struct LoadedPlugin {
 
 impl Drop for LoadedPlugin {
     fn drop(&mut self) {
+        self.gate.close();
         // SAFETY: the instance the entry point made, destroyed once.
         unsafe { (self.api.destroy)(self.api.instance) };
+    }
+}
+
+/// Locks `m`, through a panic of another holder (the data is a queue or
+/// an answer, whole after any panic).
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn error_reply(e: impl Into<String>) -> String {
+    Value::map().with("error", e.into()).to_json()
+}
+
+/// What one plugin's `HostApi` points at (its `ctx`). Never freed: a
+/// plugin's own threads may still hold it, and call, after the plugin is
+/// gone (a few dozen bytes for each plugin loaded; reloads are rare).
+struct Gate {
+    /// The server's thread: calls from any other wait in `mailbox`.
+    thread: ThreadId,
+    /// Followed only on the server's thread, and only while `alive`.
+    shared: *const Shared,
+    /// The plugin's number now (it changes as the host orders plugins).
+    index: AtomicUsize,
+    /// Until the plugin is dropped (with the host or by a reload).
+    alive: AtomicBool,
+    /// Whether its threads' calls are answered. Changed with the mailbox
+    /// locked, so a call is never queued after its gate closed.
+    remote: AtomicBool,
+    mailbox: Arc<Mailbox>,
+}
+
+// SAFETY: from other threads a gate is only read for its atomics and its
+// mailbox (itself `Sync`); `shared` is followed only on the server's thread.
+unsafe impl Send for Gate {}
+unsafe impl Sync for Gate {}
+
+/// Calls from plugins' threads, waiting for the server's thread.
+#[derive(Default)]
+struct Mailbox {
+    queue: Mutex<Vec<Request>>,
+}
+
+struct Request {
+    gate: &'static Gate,
+    method: String,
+    args: String,
+    slot: Arc<Slot>,
+}
+
+/// Where the answer to one call from another thread lands.
+#[derive(Default)]
+struct Slot {
+    state: Mutex<Answer>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+enum Answer {
+    #[default]
+    Waiting,
+    Ready(String),
+    /// The caller gave up waiting: the call is not run.
+    Abandoned,
+}
+
+impl Slot {
+    fn answer(&self, reply: String) {
+        let mut state = lock(&self.state);
+        if matches!(*state, Answer::Waiting) {
+            *state = Answer::Ready(reply);
+            self.ready.notify_all();
+        }
+    }
+
+    fn abandoned(&self) -> bool {
+        matches!(*lock(&self.state), Answer::Abandoned)
+    }
+
+    /// Waits for the answer until `deadline`; None (and abandoned) after.
+    fn wait(&self, deadline: Instant) -> Option<String> {
+        let mut state = lock(&self.state);
+        loop {
+            if let Answer::Ready(reply) = std::mem::take(&mut *state) {
+                return Some(reply);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                *state = Answer::Abandoned;
+                return None;
+            }
+            state = self
+                .ready
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+impl Gate {
+    /// Answers its threads' calls (`on`) or stops: calls waiting are
+    /// failed, later ones fail at once.
+    fn set_remote(&self, on: bool) {
+        let mut queue = lock(&self.mailbox.queue);
+        self.remote.store(on, Ordering::Relaxed);
+        if !on {
+            let (mine, rest) = std::mem::take(&mut *queue)
+                .into_iter()
+                .partition::<Vec<_>, _>(|r| std::ptr::eq(r.gate, self));
+            *queue = rest;
+            drop(queue);
+            for r in mine {
+                r.slot.answer(error_reply(format!(
+                    "`{}`: the plugin is being disabled",
+                    r.method
+                )));
+            }
+        }
+    }
+
+    /// The plugin is gone: nothing reaches the server through it again.
+    fn close(&self) {
+        self.set_remote(false);
+        self.alive.store(false, Ordering::Relaxed);
+    }
+
+    /// A call from a thread other than the server's: queued for the next
+    /// tick, waited for.
+    fn remote_call(&'static self, method: &str, args: &str) -> String {
+        if matches!(method, "register_listener" | "register_command") {
+            return error_reply(format!(
+                "`{method}`: only from the server's thread (in `on_enable`, a listener, a task)"
+            ));
+        }
+        let slot = Arc::new(Slot::default());
+        {
+            let mut queue = lock(&self.mailbox.queue);
+            if !self.remote.load(Ordering::Relaxed) {
+                return error_reply(format!(
+                    "`{method}`: the plugin is disabled, the server no longer answers its threads"
+                ));
+            }
+            queue.push(Request {
+                gate: self,
+                method: method.to_owned(),
+                args: args.to_owned(),
+                slot: Arc::clone(&slot),
+            });
+        }
+        slot.wait(Instant::now() + REMOTE_TIMEOUT).unwrap_or_else(|| {
+            error_reply(format!(
+                "`{method}`: the server did not answer within {} s (is its thread waiting for this one?)",
+                REMOTE_TIMEOUT.as_secs()
+            ))
+        })
     }
 }
 
@@ -143,6 +316,8 @@ struct Shared {
     seen: RefCell<Vec<Player>>,
     tick: Cell<i64>,
     backend: Cell<Option<*mut (dyn Backend + 'static)>>,
+    /// Plugins' threads' calls, answered at each tick.
+    mailbox: Arc<Mailbox>,
 }
 
 /// The plugins of one server run. Cheap to clone; not `Send`.
@@ -169,6 +344,7 @@ impl PluginHost {
             seen: RefCell::new(Vec::new()),
             tick: Cell::new(0),
             backend: Cell::new(None),
+            mailbox: Arc::new(Mailbox::default()),
         });
         let host = PluginHost { shared };
         for (name, aliases, description) in [
@@ -327,11 +503,13 @@ impl PluginHost {
     }
 
     /// A server tick starts: what plugins left for it (commands asked for
-    /// inside a player's action), their schedulers, `ServerTickStartEvent`.
+    /// inside a player's action), their threads' calls, their schedulers,
+    /// `ServerTickStartEvent`.
     pub fn tick_start(&self, backend: &mut dyn Backend, tick: i64) {
         self.enter(backend, |s| {
             s.tick.set(tick);
             s.run_deferred();
+            s.run_remote();
             let plugins = s.plugins.borrow().clone();
             let payload = Value::map().with("tick", tick);
             for (i, p) in plugins.iter().enumerate() {
@@ -345,11 +523,12 @@ impl PluginHost {
 
     /// A server tick ended: `ServerTickEndEvent`, then what players did
     /// since the last tick (joined, left, moved, died, changed world or
-    /// game mode).
+    /// game mode), and plugins' threads' calls.
     pub fn tick_end(&self, backend: &mut dyn Backend, tick: i64) {
         self.enter(backend, |s| {
             s.fire("server_tick_end", Value::map().with("tick", tick), false);
             s.watch_players();
+            s.run_remote();
         });
     }
 
@@ -439,25 +618,23 @@ unsafe extern "C" fn host_call(
     method: RawStr,
     args: RawStr,
 ) -> RawBuf {
-    // SAFETY: `ctx` is the `Shared` an `Rc` keeps alive while any plugin
-    // is (plugins are dropped with it).
-    let shared = unsafe { &*ctx.cast::<Shared>() };
-    let reply = if std::thread::current().id() != shared.thread {
-        Value::map().with("error", "the server is only reachable on its own thread")
+    // The plugin's number is the gate's: `plugin` is where it was started.
+    let _ = plugin;
+    // SAFETY: `ctx` is the plugin's `Gate`, never freed.
+    let gate: &'static Gate = unsafe { &*ctx.cast::<Gate>() };
+    // SAFETY: the plugin passes text that lives for the call.
+    let (method, args) = unsafe { (method.as_str(), args.as_str()) };
+    let reply = if std::thread::current().id() != gate.thread {
+        gate.remote_call(method, args)
+    } else if gate.alive.load(Ordering::Relaxed) {
+        // SAFETY: on the server's thread while the plugin lives, and so
+        // the host that holds it.
+        let shared = unsafe { &*gate.shared };
+        shared.answer(gate.index.load(Ordering::Relaxed), method, args)
     } else {
-        // SAFETY: the plugin passes text that lives for the call.
-        let (method, args) = unsafe { (method.as_str(), args.as_str()) };
-        let args = Value::from_json(args).unwrap_or_default();
-        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            shared.call(plugin as usize, method, &args)
-        }));
-        match out {
-            Ok(Ok(v)) => Value::map().with("ok", v),
-            Ok(Err(e)) => Value::map().with("error", e),
-            Err(_) => Value::map().with("error", format!("the server failed in `{method}`")),
-        }
+        error_reply(format!("`{method}`: the plugin is unloaded"))
     };
-    RawBuf::from_string(reply.to_json())
+    RawBuf::from_string(reply)
 }
 
 /// The order plugins load in: what they depend on first, and those
@@ -696,16 +873,25 @@ impl Shared {
         let mut started: Vec<LoadedPlugin> = Vec::new();
         let base = self.plugins.borrow().len();
         for (entry, source) in entries {
-            let host_api = Box::new(HostApi {
+            let gate: &'static Gate = Box::leak(Box::new(Gate {
+                thread: self.thread,
+                shared: std::ptr::from_ref(self),
+                index: AtomicUsize::new(base + started.len()),
+                alive: AtomicBool::new(true),
+                remote: AtomicBool::new(true),
+                mailbox: Arc::clone(&self.mailbox),
+            }));
+            // Never freed, as its gate: the plugin's threads may keep it.
+            let host_api: &'static HostApi = Box::leak(Box::new(HostApi {
                 abi: ABI_VERSION,
-                ctx: std::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+                ctx: std::ptr::from_ref(gate).cast_mut().cast::<c_void>(),
                 plugin: (base + started.len()) as u32,
                 call: host_call,
                 free: abi::free_buf,
-            });
-            // SAFETY: the plugin's entry point, with a HostApi kept as long
-            // as the plugin.
-            let api = unsafe { entry(&*host_api) };
+            }));
+            // SAFETY: the plugin's entry point, with a HostApi that is
+            // never freed.
+            let api = unsafe { entry(host_api) };
             let fail = |why: String| {
                 self.log(
                     "ERROR",
@@ -714,6 +900,7 @@ impl Shared {
                 self.failed.borrow_mut().push((source.clone(), why));
             };
             if api.abi != ABI_VERSION {
+                gate.close();
                 fail(format!(
                     "it was made for plugin ABI {}, this server runs {ABI_VERSION}",
                     api.abi
@@ -723,7 +910,7 @@ impl Shared {
             let mut plugin = LoadedPlugin {
                 description: PluginDescription::default(),
                 api,
-                _host_api: host_api,
+                gate,
                 data_folder: PathBuf::new(),
                 source: source.clone(),
                 enabled: Cell::new(false),
@@ -752,8 +939,8 @@ impl Shared {
                 Err(e) => fail(format!("its description: {e}")),
             }
         }
-        // Put them in order. Their HostApi numbers are where each was
-        // started; renumber to where it lands.
+        // Put them in order. Their numbers are where each was started;
+        // renumber their gates to where each lands.
         let descs: Vec<PluginDescription> = started.iter().map(|p| p.description.clone()).collect();
         let (order, failed) = load_order(&descs);
         for (i, why) in failed {
@@ -767,11 +954,11 @@ impl Shared {
         }
         let mut slots: Vec<Option<LoadedPlugin>> = started.into_iter().map(Some).collect();
         for i in order {
-            let Some(mut p) = slots[i].take() else {
+            let Some(p) = slots[i].take() else {
                 continue;
             };
             let at = self.plugins.borrow().len();
-            p._host_api.plugin = at as u32;
+            p.gate.index.store(at, Ordering::Relaxed);
             for perm in &p.description.permissions {
                 self.permissions.borrow_mut().declare(perm);
             }
@@ -807,6 +994,7 @@ impl Shared {
                 ),
             );
             p.enabled.set(true);
+            p.gate.set_remote(true);
             if let Err(e) = self.send(i, "enable", &Value::map()) {
                 self.log("ERROR", &format!("[{}] on_enable: {e}", p.description.name));
                 self.disable(i);
@@ -838,6 +1026,9 @@ impl Shared {
                 p.description.full_name()
             ),
         );
+        // First, so an `on_disable` that waits for the plugin's threads
+        // doesn't wait on a call of theirs: those fail now.
+        p.gate.set_remote(false);
         self.report(i, "on_disable", self.send(i, "disable", &Value::map()));
         p.enabled.set(false);
         for list in self.listeners.borrow_mut().values_mut() {
@@ -1239,6 +1430,55 @@ impl Shared {
                         .with("previous", old.game_mode.to_wire()),
                     false,
                 );
+            }
+        }
+    }
+
+    /// A plugin's call, as the JSON answer it gets.
+    fn answer(&self, from: usize, method: &str, args: &str) -> String {
+        let args = Value::from_json(args).unwrap_or_default();
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.call(from, method, &args)
+        }));
+        match out {
+            Ok(Ok(v)) => Value::map().with("ok", v).to_json(),
+            Ok(Err(e)) => error_reply(e),
+            Err(_) => error_reply(format!("the server failed in `{method}`")),
+        }
+    }
+
+    /// Answers the calls plugins' threads left in the mailbox, for up to
+    /// [`REMOTE_BUDGET`]: a thread whose call was answered may make the
+    /// next one within it.
+    fn run_remote(&self) {
+        let start = Instant::now();
+        loop {
+            let batch = std::mem::take(&mut *lock(&self.mailbox.queue));
+            if batch.is_empty() {
+                return;
+            }
+            let mut left = Vec::new();
+            for r in batch {
+                if !left.is_empty() || start.elapsed() >= REMOTE_BUDGET {
+                    left.push(r);
+                    continue;
+                }
+                if r.slot.abandoned() {
+                    continue;
+                }
+                let reply = if r.gate.alive.load(Ordering::Relaxed) {
+                    self.answer(r.gate.index.load(Ordering::Relaxed), &r.method, &r.args)
+                } else {
+                    error_reply(format!("`{}`: the plugin is unloaded", r.method))
+                };
+                r.slot.answer(reply);
+            }
+            if !left.is_empty() {
+                // Out of time: first in line next time.
+                let mut queue = lock(&self.mailbox.queue);
+                left.append(&mut queue);
+                *queue = left;
+                return;
             }
         }
     }

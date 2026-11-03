@@ -26,7 +26,8 @@ What is left to do, most important first in each section.
 - [ ] Biomes, for HorizonEdit's `//regen`, `//setbiome` and the biome brush.
 - [ ] Run plugins' world commands in their level without swapping levels for each line (it costs time).
 - [ ] The plugins' `/version` is left out because vanilla has one: rename it (`/pluginversion`) or join vanilla's.
-- [ ] Server calls from plugin threads: today only the server thread may call the server.
+- [x] Server calls from plugin threads: they wait for the next tick, where the server's thread answers them.
+- [ ] Reads that don't wait for a tick: a snapshot (players, tick, plugins) any thread reads at once.
 
 ## New plugins and tools
 

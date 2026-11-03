@@ -332,7 +332,7 @@ footer a { color: var(--muted); }
       <div class="card">
         <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
         <h3>Scheduler</h3>
-        <p><code>run_task</code>, <code>run_later</code>, <code>run_timer</code>, and <code>run_async</code> with a handle back to the server thread.</p>
+        <p><code>run_task</code>, <code>run_later</code>, <code>run_timer</code>, and <code>run_async</code>, whose thread calls the server too (answered at the next tick) and has a handle back to the server thread.</p>
       </div>
       <div class="card">
         <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
