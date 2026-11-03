@@ -1,0 +1,4 @@
+# The engine patch must keep LF to apply to Horizon (which uses LF), and the scripts to run in sh,
+# also on a Windows checkout with core.autocrlf.
+*.patch text eol=lf
+*.sh text eol=lf

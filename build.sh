@@ -28,6 +28,11 @@ if [ ! -f "$WORK/.patched" ]; then
   # .build/ is inside this repository: without the ceiling, git apply would take this repository as its
   # root and silently skip every path of the patch.
   (cd "$WORK" && GIT_CEILING_DIRECTORIES="$ROOT/.build" git apply "$ROOT/engine/horizon.patch")
+  # Windows only: Horizon's own code at this commit doesn't build there (a Windows call in save.rs under
+  # forbid(unsafe_code)); Linux and macOS never compile it.
+  if [ "$EXT" = dll ]; then
+    (cd "$WORK" && GIT_CEILING_DIRECTORIES="$ROOT/.build" git apply "$ROOT/engine/windows.patch")
+  fi
   touch "$WORK/.patched"
 else
   # The plugin crates may have changed since: copy them again.
@@ -36,6 +41,12 @@ else
   cp -r "$ROOT/host" "$WORK/crates/horizon-plugin-host"
   sed -i.bak 's|path = "../api"|path = "../horizon-plugin-api"|' "$WORK/crates/horizon-plugin-host/Cargo.toml"
   rm -f "$WORK/crates/horizon-plugin-host/Cargo.toml.bak"
+fi
+
+if [ "$EXT" = dll ] && ! command -v dlltool >/dev/null 2>&1; then
+  echo "Windows: needs MinGW-w64 (gcc, dlltool) on PATH, e.g. winget install -e --id BrechtSanders.WinLibs.POSIX.MSVCRT," >&2
+  echo "then put its mingw64\bin folder on PATH." >&2
+  exit 1
 fi
 
 echo "== Compiling the server (the first time takes a while)"

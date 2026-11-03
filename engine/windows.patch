@@ -1,0 +1,23 @@
+diff --git a/crates/horizon-client/src/lib.rs b/crates/horizon-client/src/lib.rs
+--- a/crates/horizon-client/src/lib.rs
++++ b/crates/horizon-client/src/lib.rs
+@@ -1,6 +1,7 @@
+ //! Horizon native client: resources, world streaming, rendering and the
+ //! bindings between the validated simulation pieces and the game loop.
+-#![forbid(unsafe_code)]
++// deny, not forbid: save.rs allows one Windows call (the disk's free space).
++#![deny(unsafe_code)]
+ pub mod advancements;
+ pub mod ambience;
+ pub mod animate_tick;
+diff --git a/crates/horizon-client/src/save.rs b/crates/horizon-client/src/save.rs
+--- a/crates/horizon-client/src/save.rs
++++ b/crates/horizon-client/src/save.rs
+@@ -277,6 +277,7 @@ pub fn estimate_disk_space(dir: &Path) -> u64 {
+         }
+     }
+     #[cfg(windows)]
++    #[allow(unsafe_code)]
+     {
+         use std::os::windows::ffi::OsStrExt;
+         unsafe extern "system" {
