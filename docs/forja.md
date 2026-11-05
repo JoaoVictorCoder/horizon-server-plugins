@@ -171,6 +171,31 @@ furniture:
 - Collision is the shulkers' and barriers': players stand on them and walk into them. Interaction entities only
   take clicks.
 
+## The web editor
+
+`/forja editor` gives you a link to an editor in your browser, served by Forja's own HTTP server (no outside
+service): open it, edit, press **Aplicar no servidor**, and Forja reloads the packs and sends the new resource
+pack to everyone at once.
+
+- **Textura**: pixel art at 16, 32 or 64 pixels: pencil, eraser, fill, colour picker, mirror, undo and redo, a
+  live preview. Opens any texture of the pack; saves PNGs in `resources/assets/<namespace>/textures/`.
+- **Modelo 3D**: models made of boxes, drawn with the pack's textures: add, copy and delete boxes; their corners,
+  rotation (±22.5°, ±45° on an axis, around a centre) and the texture of each face; pick one by clicking it, move
+  it with the arrows and PgUp/PgDn, resize it with Shift. Opens a model of the pack and saves it in
+  `resources/assets/<namespace>/models/`, with display settings for the hand, the ground and the inventory.
+- **Conteúdo e hitboxes**: everything the packs define, and new items, blocks and furniture. A piece of
+  furniture shows its model and its hitboxes in 3D (green: shulkers, with their scale and opening; red: barriers;
+  blue: interaction), edited as you watch. What the editor makes goes to the pack's `config/editor.yml`; the rest is
+  shown, not changed.
+- **+ Pack** makes a new pack folder.
+
+The link carries a secret token: **anyone with it can change your packs** until it expires (`editor.hours` in
+`config.yml`, 2 by default) or `/forja editor` makes another. The editor only reads and writes `.png`, `.json`,
+`.yml`, `.mcmeta` and `.txt` files inside `plugins/Forja/packs/`, 8 MiB at most each. The 3D views load three.js
+from cdnjs.cloudflare.com in the browser; without it, only the texture editor works.
+
+Try it without a server: `cargo run -p forja-core --example editor_preview -- path/to/packs`.
+
 ## Commands
 
 `/forja` needs `forja.admin` (operators by default).
@@ -181,6 +206,7 @@ furniture:
 | `/forja get <item> [amount]` | Gives it to yourself. |
 | `/forja list [pack]` | The packs and their items. |
 | `/forja pack` | The resource pack: files, size, SHA-1 and URL. |
+| `/forja editor` | A link to the web editor (above). |
 | `/forja reload` | Reads `config.yml` and the packs again and rebuilds the pack. If it changed, it is sent to every player at once: their textures change without leaving. |
 
 ## The resource pack

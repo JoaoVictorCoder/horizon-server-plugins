@@ -95,11 +95,31 @@ pub struct Forja {
     /// Saved pieces whose definition is gone: kept, to come back with it.
     orphans: Vec<Value>,
     next_uid: u64,
+    /// Set by the web editor's "apply": Forja reloads at its next check.
+    editor_reload: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Forja {
     fn packs_dir(ctx: &Ctx<Self>) -> PathBuf {
         ctx.data_folder().join("packs")
+    }
+
+    /// `/forja reload`: the config and the packs again, and the new pack to
+    /// every player if it changed. (changed, players sent to, warnings)
+    fn reload_all(&mut self, ctx: &mut Ctx<Self>) -> (bool, usize, usize) {
+        ctx.reload_config();
+        let changed = self.load(ctx);
+        let warnings =
+            self.content.warnings.len() + self.pack.as_ref().map_or(0, |p| p.warnings.len());
+        let mut sent = 0;
+        if changed {
+            for p in ctx.server().online_players() {
+                if self.send_pack(ctx, &p) {
+                    sent += 1;
+                }
+            }
+        }
+        (changed, sent, warnings)
     }
 
     /// Reads the packs and builds the resource pack again: whether the pack changed.
@@ -625,6 +645,26 @@ impl Plugin for Forja {
                 .info(&format!("players download it from {url}"));
         }
 
+        // The web editor's "apply": reloaded here, on the server's thread.
+        ctx.run_timer(20, 10, |forja, ctx| {
+            if forja
+                .editor_reload
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                let (changed, sent, warnings) = forja.reload_all(ctx);
+                let line = format!(
+                    "§6Forja§7: reloaded from the web editor: {} item(s), {} block(s), {} piece(s) of furniture{}{}.",
+                    forja.content.items.len(),
+                    forja.content.blocks.len(),
+                    forja.content.furniture.len(),
+                    if changed { format!(", new pack sent to {sent} player(s)") } else { String::new() },
+                    if warnings > 0 { format!(", §e{warnings} warning(s) in the log§7") } else { String::new() }
+                );
+                ctx.logger().info(&color::strip(&line));
+                ctx.server().broadcast(&line, "forja.admin");
+            }
+        });
+
         ctx.on(|forja: &mut Forja, ctx, e: &mut PlayerJoinEvent| {
             if !forja.send_pack(ctx, &e.player) {
                 // Not in reach yet: a second later.
@@ -895,19 +935,38 @@ impl Plugin for Forja {
                     }
                     true
                 }
+                "editor" => {
+                    let Some(server) = &forja.http else {
+                        sender.send_message(
+                            "§cThe editor is served by Forja's HTTP server: turn on resource-pack.http in config.yml.",
+                        );
+                        return true;
+                    };
+                    let hours = ctx.config().f64_or("editor.hours", 2.0).clamp(0.1, 48.0);
+                    let token = forja_core::editor::new_token();
+                    server.open_editor(forja_core::editor::Editor::new(
+                        token.clone(),
+                        Self::packs_dir(ctx),
+                        std::time::Duration::from_secs_f64(hours * 3600.0),
+                        forja.editor_reload.clone(),
+                    ));
+                    let base = forja
+                        .url
+                        .as_deref()
+                        .and_then(|u| u.rsplit_once('/'))
+                        .map(|(b, _)| b.to_owned())
+                        .unwrap_or_default();
+                    let link = format!("{base}/editor/{token}/");
+                    sender.send_message("§6Forja editor§7: open this link in a browser (anyone with it can edit the packs):");
+                    sender.send_message(&format!("§f{link}"));
+                    sender.send_message(&format!(
+                        "§7It works for {hours:.1} h; §f/forja editor§7 again makes a new link and closes this one."
+                    ));
+                    ctx.logger().info(&format!("{} opened the web editor", sender.name()));
+                    true
+                }
                 "reload" => {
-                    ctx.reload_config();
-                    let changed = forja.load(ctx);
-                    let warnings = forja.content.warnings.len()
-                        + forja.pack.as_ref().map_or(0, |p| p.warnings.len());
-                    let mut sent = 0;
-                    if changed {
-                        for p in ctx.server().online_players() {
-                            if forja.send_pack(ctx, &p) {
-                                sent += 1;
-                            }
-                        }
-                    }
+                    let (changed, sent, warnings) = forja.reload_all(ctx);
                     sender.send_message(&format!(
                         "§aForja reloaded: {} item(s){}{}.",
                         forja.content.items.len(),
@@ -938,7 +997,7 @@ impl Plugin for Forja {
                     .collect::<Vec<_>>()
             };
             match args.len() {
-                0 | 1 => ["give", "get", "list", "pack", "reload"]
+                0 | 1 => ["give", "get", "list", "pack", "reload", "editor"]
                     .map(String::from)
                     .to_vec(),
                 2 => match args[0].as_str() {

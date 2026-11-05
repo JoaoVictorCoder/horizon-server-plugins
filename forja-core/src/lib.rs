@@ -6,6 +6,7 @@
 
 pub mod blocks;
 pub mod content;
+pub mod editor;
 pub mod furniture;
 pub mod http;
 pub mod pack;

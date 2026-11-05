@@ -35,7 +35,8 @@ items:
     texture: item/rubi     # resources/assets/exemplo/textures/item/rubi.png
 ```
 
-Now: custom items and custom blocks with states. Next: furniture with hitboxes, recipes
+A **web editor** (`/forja editor`) makes textures, 3D models, items, blocks and furniture with their hitboxes in a
+browser, served by the server itself. Now: custom items, blocks with states, furniture with hitboxes. Next: furniture with hitboxes, recipes
 ([roadmap](docs/forja.md#roadmap)).
 
 **[Engenho](docs/engenho.md)** (`engenho/`), built on Forja: a tech mod with machines (grinder, electric furnace,

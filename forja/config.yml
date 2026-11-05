@@ -24,3 +24,9 @@ resource-pack:
   # plugins/Forja/pack.zip, such as a CDN, ending in the file:
   # https://cdn.example.com/pack.zip
   public-url: ''
+
+# The web editor (/forja editor): textures, models, items, blocks and
+# furniture with their hitboxes, edited in a browser, served by the HTTP
+# server above. A link works for this many hours.
+editor:
+  hours: 2

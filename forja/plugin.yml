@@ -7,7 +7,7 @@ api-version: '1'
 commands:
   forja:
     description: Forja's items and resource pack
-    usage: /<command> give <player> <item> [amount] | get <item> [amount] | list [pack] | pack | reload
+    usage: /<command> give <player> <item> [amount] | get <item> [amount] | list [pack] | pack | reload | editor
     permission: forja.admin
 permissions:
   forja.admin:

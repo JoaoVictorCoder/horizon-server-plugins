@@ -46,6 +46,8 @@ What is left to do, most important first in each section.
 - [x] Furniture: `item_display` + interaction entities, barrier and shulker hitboxes, `PlayerInteractEntityEvent`.
 - [ ] Try furniture in game: the display's look and turn, shulker hitboxes (scale, peek), breaking.
 - [ ] Seats, happy ghast floors, furniture with states.
+- [x] The web editor: textures, models, content and hitboxes (`/forja editor`).
+- [ ] Editor: UV editing, block variants, item model definitions (`select`, `range_dispatch`), several editors at once.
 - [ ] Hardness and tools for blocks; tripwire and mushroom blocks as carriers.
 
 ## Engenho (docs/engenho.md)
