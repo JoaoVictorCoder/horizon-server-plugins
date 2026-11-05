@@ -1,0 +1,84 @@
+items:
+  cobalto_bruto:
+    material: raw_iron
+    name: '&9Cobalto Bruto'
+    texture: item/cobalto_bruto
+  lingote_cobalto:
+    material: iron_ingot
+    name: '&9Lingote de Cobalto'
+    texture: item/lingote_cobalto
+  po_cobalto:
+    material: gunpowder
+    name: '&9Pó de Cobalto'
+    texture: item/po_cobalto
+  po_ferro:
+    material: gunpowder
+    name: '&fPó de Ferro'
+    texture: item/po_ferro
+  po_ouro:
+    material: glowstone_dust
+    name: '&ePó de Ouro'
+    texture: item/po_ouro
+  po_cobre:
+    material: gunpowder
+    name: '&6Pó de Cobre'
+    texture: item/po_cobre
+  placa_ferro:
+    material: paper
+    name: '&fPlaca de Ferro'
+    texture: item/placa_ferro
+  placa_cobre:
+    material: paper
+    name: '&6Placa de Cobre'
+    texture: item/placa_cobre
+  placa_cobalto:
+    material: paper
+    name: '&9Placa de Cobalto'
+    texture: item/placa_cobalto
+  circuito:
+    material: paper
+    name: '&aCircuito'
+    texture: item/circuito
+  carcaca:
+    material: paper
+    name: '&7Carcaça de Máquina'
+    texture: item/carcaca
+  upgrade_velocidade:
+    material: paper
+    name: '&bUpgrade de Velocidade'
+    lore: ['&7Máquinas trabalham mais rápido,', '&7gastando mais energia. Até 4.']
+    texture: item/upgrade_velocidade
+  upgrade_eficiencia:
+    material: paper
+    name: '&aUpgrade de Eficiência'
+    lore: ['&7Máquinas gastam menos energia. Até 4.']
+    texture: item/upgrade_eficiencia
+
+  # The machines' menus draw progress and energy with these.
+  gui_vazio:
+    material: paper
+    name: ' '
+    texture: gui/vazio
+  gui_progresso_0: {material: paper, texture: gui/progresso_0}
+  gui_progresso_1: {material: paper, texture: gui/progresso_1}
+  gui_progresso_2: {material: paper, texture: gui/progresso_2}
+  gui_progresso_3: {material: paper, texture: gui/progresso_3}
+  gui_progresso_4: {material: paper, texture: gui/progresso_4}
+  gui_progresso_5: {material: paper, texture: gui/progresso_5}
+  gui_progresso_6: {material: paper, texture: gui/progresso_6}
+  gui_progresso_7: {material: paper, texture: gui/progresso_7}
+  gui_progresso_8: {material: paper, texture: gui/progresso_8}
+  gui_energia_0: {material: paper, texture: gui/energia_0}
+  gui_energia_1: {material: paper, texture: gui/energia_1}
+  gui_energia_2: {material: paper, texture: gui/energia_2}
+  gui_energia_3: {material: paper, texture: gui/energia_3}
+  gui_energia_4: {material: paper, texture: gui/energia_4}
+  gui_energia_5: {material: paper, texture: gui/energia_5}
+  gui_energia_6: {material: paper, texture: gui/energia_6}
+  gui_energia_7: {material: paper, texture: gui/energia_7}
+  gui_energia_8: {material: paper, texture: gui/energia_8}
+  gui_chama_0: {material: paper, texture: gui/chama_0}
+  gui_chama_1: {material: paper, texture: gui/chama_1}
+  gui_chama_2: {material: paper, texture: gui/chama_2}
+  gui_chama_3: {material: paper, texture: gui/chama_3}
+  gui_chama_4: {material: paper, texture: gui/chama_4}

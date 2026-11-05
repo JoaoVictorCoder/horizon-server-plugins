@@ -7,17 +7,33 @@
 //! - [`content`]: what the packs define (`config/*.yml`).
 //! - [`pack`]: the resource pack built from them ([`zip`], [`sha1`]).
 //! - [`http`]: the server that hands the pack out.
+//! - [`blocks`]: custom blocks, drawn as note block states.
+//!
+//! Other plugins own the blocks they define (`owner:` in YAML): Forja tells
+//! them when one is placed, broken or used, on the `forja:block` channel,
+//! and answers them on `forja:item`, `forja:set_block` and `forja:state`
+//! (docs/forja.md).
 
-pub mod content;
-pub mod http;
-pub mod pack;
-pub mod sha1;
-pub mod zip;
+pub use forja_core::{blocks, content, http, pack, sha1, zip};
 
-use content::Content;
+use blocks::{Allocation, NoteState};
+use content::{BlockDef, Content};
 use horizon_plugin_api::prelude::*;
+use horizon_plugin_api::types::Wire;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Blocks a custom block may be placed into.
+const REPLACEABLE: &[&str] = &[
+    "minecraft:air",
+    "minecraft:cave_air",
+    "minecraft:void_air",
+    "minecraft:short_grass",
+    "minecraft:fern",
+    "minecraft:dead_bush",
+    "minecraft:snow",
+    "minecraft:water",
+];
 
 /// The id clients keep Forja's pack under: a new one replaces it.
 const PACK_ID: Uuid = Uuid(0x6f72_6a61_2d70_4b63_8a5e_464f_524a_4100);
@@ -53,6 +69,11 @@ pub struct Forja {
     http: Option<http::PackServer>,
     /// The URL players download the pack from.
     url: Option<String>,
+    /// Which note block state each custom block state is.
+    states: Allocation,
+    /// Players who placed a block this tick: their hand changes at the next
+    /// tick's start, so a second click this tick would place for free.
+    placing: Vec<Uuid>,
 }
 
 impl Forja {
@@ -73,7 +94,31 @@ impl Forja {
             &ctx.config()
                 .string_or("resource-pack.description", "&6Forja"),
         );
-        let built = pack::build(&self.content, &description);
+        // Each state of each block keeps the note block state it had; new
+        // ones take free states.
+        let states_file = ctx.data_folder().join("states.txt");
+        self.states = Allocation::load(&states_file);
+        let mut full = false;
+        for block in &self.content.blocks {
+            for props in blocks::combinations(&block.properties) {
+                if self.states.assign(&block.id, &props).is_none() {
+                    full = true;
+                }
+            }
+        }
+        if full {
+            log.severe("every note block state is taken: some blocks have no look");
+        }
+        if self.states.dirty
+            && let Err(e) = self.states.save(&states_file)
+        {
+            log.severe(&format!("could not write states.txt: {e}"));
+        }
+        if !self.content.blocks.is_empty() {
+            // Note blocks keep their state: the others draw custom blocks.
+            ctx.server().set_note_blocks_inert(true);
+        }
+        let built = pack::build(&self.content, &description, &self.states);
         for w in &built.warnings {
             log.warning(w);
         }
@@ -81,9 +126,10 @@ impl Forja {
             log.warning(&format!("could not write pack.zip: {e}"));
         }
         log.info(&format!(
-            "{} pack(s), {} item(s); resource pack: {} files, {} KiB, sha1 {}",
+            "{} pack(s), {} item(s), {} block(s); resource pack: {} files, {} KiB, sha1 {}",
             self.content.packs.len(),
             self.content.items.len(),
+            self.content.blocks.len(),
             built.files,
             built.zip.len().div_ceil(1024),
             built.sha1
@@ -95,6 +141,129 @@ impl Forja {
         self.url = pack_url(ctx, &built.sha1, self.http.as_ref().map(|h| h.port));
         self.pack = Some(built);
         changed
+    }
+
+    /// The custom block a block is, with its state: a note block in one of
+    /// the states Forja gave out.
+    fn custom_block(&self, block: &Block) -> Option<(&BlockDef, Vec<(String, String)>)> {
+        if block.kind != "minecraft:note_block" {
+            return None;
+        }
+        let note = NoteState::from_properties(&block.properties)?;
+        let (id, props) = self.states.block_of(note)?;
+        Some((self.content.block(&id)?, props))
+    }
+
+    /// Tells a block's owner what happened to it (`placed`, `broken`,
+    /// `used`): its answer, or Null without an owner.
+    fn notify(
+        &self,
+        ctx: &Ctx<Self>,
+        def: &BlockDef,
+        action: &str,
+        pos: &BlockPos,
+        props: &[(String, String)],
+        player: &Player,
+    ) -> Value {
+        let Some(owner) = &def.owner else {
+            return Value::Null;
+        };
+        let message = Value::map()
+            .with("action", action)
+            .with("block", &def.id)
+            .with("pos", pos.to_wire())
+            .with("properties", props_value(props))
+            .with("player", player.to_wire());
+        match ctx.server().message_plugin(owner, "forja:block", message) {
+            Ok(v) => v,
+            Err(e) => {
+                ctx.logger()
+                    .warning(&format!("{} ({owner}) on `{action}`: {e}", def.id));
+                Value::Null
+            }
+        }
+    }
+
+    /// Sets the block at `pos` to `def` in the state `props`.
+    fn set_block(&self, def: &BlockDef, pos: &BlockPos, props: &[(String, String)]) -> bool {
+        let props = def.complete(props);
+        match self.states.get(&def.id, &props) {
+            Some(note) => pos.set_type(&note.block_string()),
+            None => false,
+        }
+    }
+
+    /// A player right-clicked `clicked` on `face` holding `def`'s item:
+    /// places it where a block would go. Whether it was placed.
+    fn place(
+        &mut self,
+        ctx: &mut Ctx<Self>,
+        player: &Player,
+        def: &BlockDef,
+        clicked: &Block,
+        face: BlockFace,
+    ) -> bool {
+        if self.placing.contains(&player.uuid) {
+            return false;
+        }
+        let target = if REPLACEABLE.contains(&clicked.kind.as_str()) {
+            clicked.pos.clone()
+        } else {
+            let [dx, dy, dz] = face.offset();
+            clicked.pos.offset(dx, dy, dz)
+        };
+        let free = target
+            .block()
+            .is_some_and(|b| REPLACEABLE.contains(&b.kind.as_str()));
+        let feet = player.location.block();
+        let in_player = target.world == feet.world
+            && target.x == feet.x
+            && target.z == feet.z
+            && (target.y == feet.y || target.y == feet.y + 1);
+        if !free || in_player || !(-64..320).contains(&target.y) {
+            return false;
+        }
+        let mut props = def.default_state();
+        if let Some((_, values)) = def.properties.iter().find(|(k, _)| k == "facing") {
+            // The block's front looks at the player.
+            let [dx, dy, dz] = player.location.facing().offset();
+            let toward = BlockFace::from_offset([-dx, -dy, -dz]).map(BlockFace::name);
+            let horizontal = {
+                let level = player
+                    .location
+                    .clone()
+                    .with_rotation(player.location.yaw, 0.0);
+                let [dx, _, dz] = level.facing().offset();
+                BlockFace::from_offset([-dx, 0, -dz]).map(BlockFace::name)
+            };
+            let pick = toward
+                .filter(|f| values.iter().any(|v| v == f))
+                .or(horizontal.filter(|f| values.iter().any(|v| v == f)));
+            if let Some(f) = pick {
+                for (k, v) in &mut props {
+                    if k == "facing" {
+                        *v = f.to_owned();
+                    }
+                }
+            }
+        }
+        if !self.set_block(def, &target, &props) {
+            return false;
+        }
+        if player.game_mode != GameMode::Creative
+            && let Some(item) = self.content.item(&def.id)
+        {
+            let left = player
+                .item_in_hand()
+                .map_or(0, |s| s.amount.saturating_sub(1));
+            let stack = (left > 0).then(|| item.stack(left));
+            player.set_equipment("mainhand", stack.as_ref());
+        }
+        self.placing.push(player.uuid);
+        ctx.run_task(|forja, _| forja.placing.clear());
+        play_at(&target, "minecraft:block.stone.place");
+        self.notify(ctx, def, "placed", &target, &props, player);
+        true
     }
 
     fn resource_pack(&self, ctx: &mut Ctx<Self>) -> Option<ResourcePack> {
@@ -118,6 +287,35 @@ impl Forja {
             None => true,
         }
     }
+}
+
+/// Block properties as a map on the wire.
+fn props_value(props: &[(String, String)]) -> Value {
+    Value::Map(
+        props
+            .iter()
+            .map(|(k, v)| (k.clone(), Value::from(v)))
+            .collect(),
+    )
+}
+
+fn props_of(v: Option<&Value>) -> Vec<(String, String)> {
+    v.and_then(Value::as_map)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|(k, v)| Some((k.clone(), v.to_text()?)))
+        .collect()
+}
+
+/// A sound at a block, for the players near it.
+fn play_at(pos: &BlockPos, sound: &str) {
+    server().dispatch_command(&format!(
+        "execute in {} run playsound {sound} block @a {} {} {}",
+        pos.world,
+        f64::from(pos.x) + 0.5,
+        f64::from(pos.y) + 0.5,
+        f64::from(pos.z) + 0.5
+    ));
 }
 
 /// Where players get the pack whose hash is `sha1`.
@@ -219,6 +417,110 @@ impl Plugin for Forja {
                     forja.send_pack(ctx, &player);
                 });
             }
+        });
+
+        // Custom blocks: using one tells its owner; a block's item places it.
+        ctx.listen(
+            EventPriority::Normal,
+            true,
+            |forja: &mut Forja, ctx, e: &mut PlayerInteractEvent| {
+                if e.action != "right_click_block" {
+                    return;
+                }
+                let (Some(block), Some(face)) = (e.block.clone(), e.face) else {
+                    return;
+                };
+                if let Some((def, props)) = forja.custom_block(&block) {
+                    let def = def.clone();
+                    let used = forja.notify(ctx, &def, "used", &block.pos, &props, &e.player);
+                    if used.as_bool() == Some(true) {
+                        e.set_cancelled(true);
+                        return;
+                    }
+                }
+                let Some(def) = e
+                    .item
+                    .as_ref()
+                    .and_then(|i| forja.content.item_of(i))
+                    .and_then(|i| forja.content.block(&i.id))
+                    .cloned()
+                else {
+                    return;
+                };
+                // Its item is not the block: whatever happens, the item's own
+                // use doesn't.
+                e.set_cancelled(true);
+                forja.place(ctx, &e.player, &def, &block, face);
+            },
+        );
+        ctx.listen(
+            EventPriority::Normal,
+            true,
+            |forja: &mut Forja, ctx, e: &mut BlockBreakEvent| {
+                let Some((def, props)) = forja.custom_block(&e.block) else {
+                    return;
+                };
+                let def = def.clone();
+                // The note block itself would drop: Forja breaks it instead.
+                e.set_cancelled(true);
+                let pos = e.block.pos.clone();
+                pos.set_type("minecraft:air");
+                play_at(&pos, "minecraft:block.stone.break");
+                if def.drops_self
+                    && e.player.game_mode != GameMode::Creative
+                    && let Some(item) = forja.content.item(&def.id)
+                {
+                    e.player.give_item(&item.stack(1));
+                }
+                forja.notify(ctx, &def, "broken", &pos, &props, &e.player);
+            },
+        );
+
+        // What other plugins ask of Forja.
+        ctx.on_message("forja:item", |forja, _, m| {
+            let id = m
+                .message
+                .get("id")
+                .and_then(Value::to_text)
+                .unwrap_or_default();
+            let amount = m
+                .message
+                .get("amount")
+                .and_then(Value::as_i64)
+                .map_or(1, |n| n.clamp(1, 99) as u32);
+            forja
+                .content
+                .item(&id)
+                .map_or(Value::Null, |i| i.stack(amount).to_wire())
+        });
+        ctx.on_message("forja:state", |forja, _, m| {
+            let id = m
+                .message
+                .get("block")
+                .and_then(Value::to_text)
+                .unwrap_or_default();
+            let Some(def) = forja.content.block(&id) else {
+                return Value::Null;
+            };
+            let props = def.complete(&props_of(m.message.get("properties")));
+            forja
+                .states
+                .get(&def.id, &props)
+                .map_or(Value::Null, |n| Value::from(n.block_string()))
+        });
+        ctx.on_message("forja:set_block", |forja, _, m| {
+            let id = m
+                .message
+                .get("block")
+                .and_then(Value::to_text)
+                .unwrap_or_default();
+            let (Some(def), Some(pos)) = (
+                forja.content.block(&id),
+                m.message.get("pos").and_then(BlockPos::from_wire),
+            ) else {
+                return Value::Bool(false);
+            };
+            Value::Bool(forja.set_block(def, &pos, &props_of(m.message.get("properties"))))
         });
 
         ctx.set_executor("forja", |forja, ctx, sender, _, args| {

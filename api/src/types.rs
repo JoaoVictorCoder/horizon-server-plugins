@@ -980,10 +980,12 @@ impl Player {
         };
         self.replace_item(&at, item)
     }
-    /// Puts `item` on them: `head`, `chest`, `legs`, `feet` or `offhand`.
+    /// Puts `item` on them: `head`, `chest`, `legs`, `feet`, `offhand` or
+    /// `mainhand` (the selected hotbar slot).
     pub fn set_equipment(&self, slot: &str, item: Option<&ItemStack>) -> bool {
         let at = match slot {
             "offhand" => "weapon.offhand".to_owned(),
+            "mainhand" => "weapon.mainhand".to_owned(),
             s => format!("armor.{s}"),
         };
         self.replace_item(&at, item)
@@ -1015,7 +1017,8 @@ pub fn legacy_json(text: &str) -> String {
 pub struct Menu {
     /// 1 to 6.
     pub rows: u8,
-    /// With `§` codes.
+    /// With `§` codes, or a JSON text component (starting with `{` or `[`)
+    /// sent as it is: a font from the resource pack draws a GUI's background.
     pub title: String,
     /// By slot, `rows * 9` at most.
     pub items: Vec<Option<ItemStack>>,

@@ -247,6 +247,23 @@ impl Server {
         self.dispatch_command(&format!("whitelist remove {name}"))
     }
     /// Saves every world (`/save-all`).
+    /// The overworld's time of day in ticks: 0 at sunrise, 6000 noon,
+    /// 12000 sunset, 18000 midnight, counting on past 24000 day after day.
+    pub fn day_time(&self) -> Option<i64> {
+        call("day_time", Value::Null).ok()?.as_i64()
+    }
+    /// Whether it is day in the overworld (sunrise to sunset).
+    pub fn is_day(&self) -> bool {
+        self.day_time()
+            .is_some_and(|t| t.rem_euclid(24000) < 12300 || t.rem_euclid(24000) > 23850)
+    }
+    /// Makes note blocks keep the state they were placed in: no tuning, no
+    /// instrument from the block below, no redstone, and a placed one is
+    /// always the plain state (harp, note 0). Their other states are then
+    /// free to draw custom blocks with a resource pack, as Forja does.
+    pub fn set_note_blocks_inert(&self, inert: bool) {
+        let _ = call("note_blocks_inert", Value::map().with("inert", inert));
+    }
     pub fn save_all(&self) -> bool {
         self.dispatch_command("save-all")
     }

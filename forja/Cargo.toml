@@ -9,8 +9,10 @@ description = "Forja: server-side mods for Horizon (custom items with their own 
 # A plugin like any other: `cargo build --release -p forja`, then copy
 # target/release/libforja.so (forja.dll, libforja.dylib) into plugins/.
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
-# No dependencies but the API: the zip, SHA-1 and HTTP server are small and in src/.
+# No dependencies but the API and Forja's library (../forja-core): the zip,
+# SHA-1 and HTTP server are small and written there.
 [dependencies]
 horizon-plugin-api = { path = "../api" }
+forja-core = { path = "../forja-core" }

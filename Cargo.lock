@@ -3,7 +3,23 @@
 version = 4
 
 [[package]]
+name = "engenho"
+version = "0.1.0"
+dependencies = [
+ "forja-core",
+ "horizon-plugin-api",
+]
+
+[[package]]
 name = "forja"
+version = "0.1.0"
+dependencies = [
+ "forja-core",
+ "horizon-plugin-api",
+]
+
+[[package]]
+name = "forja-core"
 version = "0.1.0"
 dependencies = [
  "horizon-plugin-api",

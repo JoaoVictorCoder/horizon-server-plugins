@@ -74,6 +74,17 @@ pub trait Backend {
         let _ = id;
         None
     }
+    /// The overworld's time of day in ticks (`/time query daytime`, 0 at
+    /// sunrise, counting on past 24000), when the server can tell.
+    fn day_time(&self) -> Option<i64> {
+        None
+    }
+    /// Makes note blocks keep the state they were placed in (no tuning, no
+    /// instrument from below, no redstone), so a plugin can draw custom
+    /// blocks as their states.
+    fn set_note_blocks_inert(&mut self, inert: bool) {
+        let _ = inert;
+    }
     /// Offers `uuid` a resource pack (`Player.setResourcePack`): whether
     /// they are on to get it.
     fn resource_pack(&mut self, uuid: Uuid, pack: &ResourcePack) -> bool {
@@ -1317,6 +1328,15 @@ impl Shared {
             "players" => self.backend()?.players().to_wire(),
             "send_message" => Value::Bool(self.backend()?.tell(uuid()?, &text("message"))),
             "action_bar" => Value::Bool(self.backend()?.action_bar(uuid()?, &text("message"))),
+            "day_time" => self
+                .backend()?
+                .day_time()
+                .map_or(Value::Null, Value::from),
+            "note_blocks_inert" => {
+                let inert = args.get("inert").and_then(Value::as_bool).unwrap_or(true);
+                self.backend()?.set_note_blocks_inert(inert);
+                Value::Null
+            }
             "resource_pack" => {
                 let pack = ResourcePack {
                     id: args.get("id").and_then(Uuid::from_wire).unwrap_or_default(),

@@ -1,0 +1,106 @@
+# Engenho's blocks. Each has an item of the same id that places it; the
+# Engenho plugin owns them: Forja tells it when one is placed, broken or used.
+blocks:
+  bancada:
+    owner: Engenho
+    name: '&fBancada de Engenharia'
+    lore: ['&7Monta as peças e máquinas do Engenho.']
+    textures:
+      top: block/bancada_topo
+      side: block/bancada_lado
+      bottom: block/carcaca_base
+      front: block/bancada_lado
+
+  moedor:
+    owner: Engenho
+    name: '&fMoedor'
+    lore: ['&7Mói minério em dois pós.']
+    properties:
+      facing: [north, east, south, west]
+      active: ['false', 'true']
+    textures:
+      front: block/moedor_frente
+      side: block/carcaca_lado
+      top: block/carcaca_topo
+      bottom: block/carcaca_base
+    variants:
+      active=true:
+        textures:
+          front: block/moedor_frente_on
+
+  forno_eletrico:
+    owner: Engenho
+    name: '&fForno Elétrico'
+    lore: ['&7Funde com energia.']
+    properties:
+      facing: [north, east, south, west]
+      active: ['false', 'true']
+    textures:
+      front: block/forno_frente
+      side: block/carcaca_lado
+      top: block/carcaca_topo
+      bottom: block/carcaca_base
+    variants:
+      active=true:
+        textures:
+          front: block/forno_frente_on
+
+  prensa:
+    owner: Engenho
+    name: '&fPrensa'
+    lore: ['&7Prensa lingotes em placas.']
+    properties:
+      facing: [north, east, south, west]
+      active: ['false', 'true']
+    textures:
+      front: block/prensa_frente
+      side: block/carcaca_lado
+      top: block/carcaca_topo
+      bottom: block/carcaca_base
+    variants:
+      active=true:
+        textures:
+          front: block/prensa_frente_on
+
+  gerador:
+    owner: Engenho
+    name: '&fGerador a Combustão'
+    lore: ['&7Queima combustível para gerar energia.']
+    properties:
+      facing: [north, east, south, west]
+      active: ['false', 'true']
+    textures:
+      front: block/gerador_frente
+      side: block/carcaca_lado
+      top: block/carcaca_topo
+      bottom: block/carcaca_base
+    variants:
+      active=true:
+        textures:
+          front: block/gerador_frente_on
+
+  painel_solar:
+    owner: Engenho
+    name: '&fPainel Solar'
+    lore: ['&7Energia do sol, de dia.']
+    properties:
+      facing: [north, east, south, west]
+      active: ['false', 'true']
+    textures:
+      top: block/solar_topo
+      side: block/carcaca_lado
+      bottom: block/carcaca_base
+      front: block/carcaca_lado
+
+  bateria:
+    owner: Engenho
+    name: '&fBateria'
+    lore: ['&7Guarda energia. Entra pelos lados,', '&7sai pela frente.']
+    properties:
+      facing: [north, east, south, west]
+      active: ['false', 'true']
+    textures:
+      front: block/bateria_frente
+      side: block/bateria_lado
+      top: block/carcaca_topo
+      bottom: block/carcaca_base

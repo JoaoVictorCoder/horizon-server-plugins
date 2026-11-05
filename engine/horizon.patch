@@ -325,10 +325,31 @@ index c875169..fc032f6 100644
          }
      }
 diff --git a/crates/horizon-client/src/game/native_menus.rs b/crates/horizon-client/src/game/native_menus.rs
-index 0feee32..5be56fd 100644
+index 0feee32..65dc317 100644
 --- a/crates/horizon-client/src/game/native_menus.rs
 +++ b/crates/horizon-client/src/game/native_menus.rs
-@@ -231,8 +231,14 @@ impl Game<'_> {
+@@ -133,6 +133,20 @@ impl Game<'_> {
+         host.hub
+             .open_native_menu(conn, rows, component_nbt(&title.component()), items)
+     }
++    /// [`native_open_menu`](Self::native_open_menu) with a title given as a
++    /// JSON text component (fonts, translations: a plugin's GUI background).
++    pub(super) fn native_open_menu_component(
++        &mut self,
++        uuid: u128,
++        rows: u8,
++        title: &serde_json::Value,
++        items: Vec<Option<ItemStack>>,
++    ) -> Option<i32> {
++        let conn = self.native_conn(uuid)?;
++        let host = self.lan.as_mut()?;
++        host.hub
++            .open_native_menu(conn, rows, component_nbt(title), items)
++    }
+     /// Replaces what the player's open native menu shows; sent with the
+     /// tick's container sync.
+     pub(super) fn native_set_menu_items(&mut self, uuid: u128, items: Vec<Option<ItemStack>>) {
+@@ -231,8 +245,14 @@ impl Game<'_> {
                      slot,
                      button,
                      mode,
@@ -408,10 +429,10 @@ index 598c794..d499943 100644
              self.native_feedback(
 diff --git a/crates/horizon-client/src/game/plugins.rs b/crates/horizon-client/src/game/plugins.rs
 new file mode 100644
-index 0000000..649bb47
+index 0000000..65be094
 --- /dev/null
 +++ b/crates/horizon-client/src/game/plugins.rs
-@@ -0,0 +1,1066 @@
+@@ -0,0 +1,1104 @@
 +//! Server plugins (docs/plugins.md): a dedicated server loads the plugin
 +//! libraries in `plugins/` with `horizon-plugin-host` when its world is
 +//! ready, and hands them what the native hook points hear, at the same
@@ -673,6 +694,12 @@ index 0000000..649bb47
 +    fn action_bar(&mut self, uuid: Uuid, message: &str) -> bool {
 +        self.game.native_action_bar(uuid.0, Text::legacy(message))
 +    }
++    fn day_time(&self) -> Option<i64> {
++        Some(self.game.world.day_time)
++    }
++    fn set_note_blocks_inert(&mut self, inert: bool) {
++        horizon_world::level::INERT_NOTE_BLOCKS.store(inert, std::sync::atomic::Ordering::Relaxed);
++    }
 +    fn resource_pack(&mut self, uuid: Uuid, pack: &ResourcePack) -> bool {
 +        let push = horizon_protocol::packets::configuration::ResourcePackPush {
 +            id: pack.id.0,
@@ -768,6 +795,16 @@ index 0000000..649bb47
 +            .iter()
 +            .map(|i| i.as_ref().map(game_stack))
 +            .collect();
++        // A title that is a JSON text component is sent as it is: plugins
++        // draw GUI backgrounds with a resource pack's font this way.
++        let json = menu.title.trim_start();
++        if json.starts_with('{') || json.starts_with('[') {
++            if let Ok(title) = serde_json::from_str::<serde_json::Value>(json) {
++                return self
++                    .game
++                    .native_open_menu_component(uuid.0, menu.rows, &title, items);
++            }
++        }
 +        self.game
 +            .native_open_menu(uuid.0, menu.rows, Text::legacy(&menu.title), items)
 +    }
@@ -1045,18 +1082,35 @@ index 0000000..649bb47
 +    pub(super) fn plugins_destroy_block(&mut self, pos: [i32; 3], state: BlockStateId) -> bool {
 +        let world = self.plugins_world();
 +        let kind = self.res.facts().get(state).name.to_string();
++        let properties = self.plugins_state_properties(state);
 +        let (_, cancelled) = self.plugins_fire("block_break", |_, d| {
 +            d.with(
 +                "block",
 +                Block {
 +                    pos: pos_of(world, pos),
 +                    kind,
-+                    properties: Vec::new(),
++                    properties,
 +                }
 +                .to_wire(),
 +            )
 +        });
 +        cancelled
++    }
++
++    /// A block state's properties (`facing` → `north`), for plugins: custom
++    /// blocks drawn as note block states are told apart by them.
++    fn plugins_state_properties(&self, state: BlockStateId) -> Vec<(String, String)> {
++        self.pack
++            .assets
++            .registry
++            .state(state)
++            .map(|s| {
++                s.properties
++                    .iter()
++                    .map(|(k, v)| (k.clone(), v.clone()))
++                    .collect()
++            })
++            .unwrap_or_default()
 +    }
 +
 +    /// A packet to one player, the acting one too (whose packets wait in
@@ -1091,7 +1145,8 @@ index 0000000..649bb47
 +                    Block {
 +                        pos: pos_of(world, pos),
 +                        kind: g.native_block(pos),
-+                        properties: Vec::new(),
++                        properties: g
++                            .plugins_state_properties(g.world.block(pos[0], pos[1], pos[2])),
 +                    }
 +                    .to_wire(),
 +                )
@@ -1247,7 +1302,11 @@ index 0000000..649bb47
 +            } else {
 +                String::new()
 +            },
-+            properties: Vec::new(),
++            properties: if world == self.dim.id() {
++                self.plugins_state_properties(self.world.block(pos[0], pos[1], pos[2]))
++            } else {
++                Vec::new()
++            },
 +        };
 +        let data = Value::map()
 +            .with("player", player.to_wire())
@@ -1824,3 +1883,94 @@ index c446d56..3957086 100644
          let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
          for name in FILES {
              if let Ok(bytes) = std::fs::read(dir.join(name)) {
+diff --git a/crates/horizon-world/src/level/hooks.rs b/crates/horizon-world/src/level/hooks.rs
+index e02f40b..96b7ba4 100644
+--- a/crates/horizon-world/src/level/hooks.rs
++++ b/crates/horizon-world/src/level/hooks.rs
+@@ -73,6 +73,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
+                 }
+                 Class::Hopper => self.hopper_check_powered(pos, state),
+                 Class::Liquid => self.liquid_block_changed(pos, state),
++                Class::Note if super::inert_note_blocks() => {}
+                 Class::Note => self.note_neighbor_changed(pos, state),
+                 Class::PistonBase => self.piston_check_if_extend(pos, state),
+                 Class::PistonHead => {
+diff --git a/crates/horizon-world/src/level/interact.rs b/crates/horizon-world/src/level/interact.rs
+index 6a1d4a6..243f790 100644
+--- a/crates/horizon-world/src/level/interact.rs
++++ b/crates/horizon-world/src/level/interact.rs
+@@ -217,6 +217,8 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
+                     }
+                     Success
+                 }
++                // An inert note block is used like any block: nothing.
++                Class::Note if super::inert_note_blocks() => Pass,
+                 Class::Note => {
+                     let next = table.cycle(state, p.note);
+                     self.set_block_and_update(pos, next);
+@@ -633,7 +635,7 @@ impl Behaviours {
+         if chain.contains(&Class::DragonEgg) {
+             sim.dragon_egg_teleport(pos, state);
+         }
+-        if chain.contains(&Class::Note) {
++        if chain.contains(&Class::Note) && !super::inert_note_blocks() {
+             sim.note_play(pos, state);
+             return true;
+         }
+@@ -770,6 +772,7 @@ impl Behaviours {
+         // NoteBlock.useItemOn: a mob head on the top face is placed, not tuned
+         // (`#minecraft:noteblock_top_instruments`).
+         if face == Direction::Up
++            && !super::inert_note_blocks()
+             && self.data(state).chain.contains(&Class::Note)
+             && item.is_some_and(|i| {
+                 matches!(
+diff --git a/crates/horizon-world/src/level/mod.rs b/crates/horizon-world/src/level/mod.rs
+index a766c3f..455d1b7 100644
+--- a/crates/horizon-world/src/level/mod.rs
++++ b/crates/horizon-world/src/level/mod.rs
+@@ -96,6 +96,18 @@ use horizon_core::{
+ use std::{collections::HashMap, io, path::Path, sync::Arc, sync::Mutex};
+ 
+ pub mod classes;
++
++/// Note blocks that keep the state they were placed in: no tuning, no
++/// instrument from the block below, no redstone. Set by the server's
++/// plugins (Forja) that draw custom blocks as note block states, the way
++/// Paper's CraftEngine and ItemsAdder do. Off unless a plugin asks.
++pub static INERT_NOTE_BLOCKS: std::sync::atomic::AtomicBool =
++    std::sync::atomic::AtomicBool::new(false);
++
++/// Whether note blocks are inert ([`INERT_NOTE_BLOCKS`]).
++pub fn inert_note_blocks() -> bool {
++    INERT_NOTE_BLOCKS.load(std::sync::atomic::Ordering::Relaxed)
++}
+ pub mod data;
+ pub mod states;
+ pub mod ticks;
+diff --git a/crates/horizon-world/src/level/place.rs b/crates/horizon-world/src/level/place.rs
+index 97c3828..ee87ea2 100644
+--- a/crates/horizon-world/src/level/place.rs
++++ b/crates/horizon-world/src/level/place.rs
+@@ -1039,6 +1039,9 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
+                 }
+                 None
+             }
++            // Inert, a placed note block is always the plain one (harp, note
++            // 0): the other states are custom blocks.
++            Class::Note if super::inert_note_blocks() => Some(default),
+             Class::Note => Some(self.note_block_instrument(pos, default)),
+             Class::RedstoneLamp => {
+                 let signal = self.has_neighbor_signal(pos);
+diff --git a/crates/horizon-world/src/level/shapes.rs b/crates/horizon-world/src/level/shapes.rs
+index 9510adc..a358856 100644
+--- a/crates/horizon-world/src/level/shapes.rs
++++ b/crates/horizon-world/src/level/shapes.rs
+@@ -641,6 +641,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
+                 }
+             }
+             Class::PistonHead => survive_or_air!(dir.opposite() == b.facing(state)),
++            Class::Note if super::inert_note_blocks() => state,
+             Class::Note => {
+                 if dir.normal()[1] != 0 {
+                     self.note_block_instrument(pos, state)

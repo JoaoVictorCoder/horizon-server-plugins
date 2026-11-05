@@ -1,0 +1,9 @@
+# Engenho (docs/engenho.md). Its blocks and items are in Forja's
+# plugins/Forja/packs/engenho, which Engenho writes as it loads.
+
+# Raw cobalt, found while mining stone deep down (until worlds generate
+# cobalt ore: that needs chunk events in the server).
+cobalt:
+  max-y: 48
+  chance-stone: 0.015
+  chance-deepslate: 0.03

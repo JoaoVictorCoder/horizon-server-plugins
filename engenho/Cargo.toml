@@ -1,0 +1,17 @@
+[package]
+name = "engenho"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Engenho: a tech mod for Horizon servers on Forja (machines, energy, ore processing)"
+
+# A plugin: `cargo build --release -p engenho`, then copy target/release/libengenho.so
+# (engenho.dll, libengenho.dylib) into plugins/, beside Forja.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+horizon-plugin-api = { path = "../api" }
+# Forja's library, to build Engenho's items exactly as Forja does.
+forja-core = { path = "../forja-core" }

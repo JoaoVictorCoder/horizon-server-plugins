@@ -8,8 +8,10 @@ and sends it to each player as they join.
 Forja is a plugin like any other (`forja/` in this repository). `./build.sh` puts `libforja.so` in
 `dist/plugins/`; copy it to the server's `plugins/`.
 
-> **Status: phase 1.** Custom items with their own textures or models, the resource pack built, served and sent
-> again on `/forja reload`. Custom blocks, furniture, recipes and GUIs come next ([roadmap](#roadmap)).
+> **Status:** custom items with their own textures or models, custom blocks with states (drawn as note block
+> states), the resource pack built, served and sent again on `/forja reload`, and channels for other plugins to
+> own blocks. [Engenho](engenho.md), a tech mod, is built on it. Furniture and recipes come next
+> ([roadmap](#roadmap)).
 
 ## Packs
 
@@ -81,6 +83,54 @@ has one, for `select` or `range_dispatch` models), and gives the item the compon
 Each Forja item carries `custom_data={"forja:id":"<ns>:<id>"}`, so Forja and other plugins know it again
 wherever it goes: `stack.data("forja:id")`.
 
+## Blocks
+
+```yaml
+# packs/exemplo/config/blocks.yml
+blocks:
+  maquina:
+    owner: MeuPlugin              # told when it is placed, broken or used (optional)
+    name: '&fMáquina'
+    material: paper               # the item that places it (default: paper)
+    properties:
+      facing: [north, east, south, west]   # set from where the player looks
+      active: ['false', 'true']
+    textures:
+      front: block/maquina_frente
+      side: block/maquina_lado
+      top: block/maquina_topo
+      bottom: block/maquina_base
+    variants:
+      active=true:                # the states this predicate matches look like this
+        textures:
+          front: block/maquina_frente_on
+  bloco_rubi:
+    texture: block/bloco_rubi     # the same texture on every face
+```
+
+| Key | What it is |
+|---|---|
+| `texture` | One texture on every face (`cube_all`). |
+| `textures` | By slot: `front`, `side`, `top`, `bottom` (`orientable`, turned by `facing`); `end`, `side` (`cube_column`); or each face `north`, `south`, `east`, `west`, `up`, `down` (`cube`); `particle`. |
+| `model` | A block model of the pack instead, turned by `facing`. |
+| `properties` | Its states: each combination of values is one. 64 states at most per block. `facing` (`north`...`west`, `up`, `down`) is set when it is placed. |
+| `variants` | Looks for some states: a predicate (`active=true`, `facing=up,lit=true`) and the textures or model it changes. |
+| `owner` | A plugin told about the block (see below). |
+| `drops` | `self` (default): breaking it gives its item back; `none`: its owner decides. |
+| `name`, `lore`, `material`, `components` | Of the item that places it, which has the block's id. |
+
+**How it works.** A vanilla client knows only vanilla blocks, so each state of each custom block is drawn as a
+**note block state**. Forja turns note blocks *inert* (a patch to the engine: no tuning, no instrument from the
+block below, no redstone; a placed note block is always the plain one). The 1296 states with a note from 1 to 24
+are then free; the pack's `note_block.json` draws each with its block's model. The world keeps the note block
+states themselves, so blocks survive restarts with no data of their own, and `plugins/Forja/states.txt` keeps which
+state is which block: **keep that file** with the world.
+
+- It is a real, solid, full block: collision, light, pistons and explosions treat it as a note block.
+- Breaking it takes a note block's time (an axe is best) and gives its item to the player.
+- Vanilla note blocks still work as decoration, but don't play; note blocks tuned before Forja turned them inert
+  may show as custom blocks.
+
 ## Commands
 
 `/forja` needs `forja.admin` (operators by default).
@@ -129,6 +179,11 @@ The API pieces Forja uses are open to any plugin:
   custom data.
 - `Player::send_resource_pack(&ResourcePack)`: offers a player a pack.
 
+- `Server::set_note_blocks_inert(bool)`, `Server::day_time()` and `is_day()`.
+- `Menu::title` may be a JSON text component (`{"text":"...","font":"ns:gui"}`): a font from the pack draws a
+  menu's background.
+- Block events (`BlockBreakEvent`, `PlayerInteractEvent`) carry the block's state properties.
+
 A plugin can recognise Forja's items without depending on Forja:
 
 ```rust
@@ -139,18 +194,59 @@ ctx.on(|_, _, e: &mut PlayerInteractEvent| {
 });
 ```
 
+### Owning blocks
+
+A plugin that owns blocks (`owner: MeuPlugin`) declares `depend: [Forja]` and answers Forja on the
+`forja:block` channel. The message is `{action, block, pos, properties, player}`; `action` is:
+
+- `placed`: after the block is set.
+- `broken`: after it is removed (its item was given back unless `drops: none`).
+- `used`: a right click. Answer `true` to say the plugin handled it (a menu opened...): the click does nothing
+  else. Answer anything else and a block item in hand is placed against it.
+
+Forja's own channels, for any plugin (`server().message_plugin("Forja", channel, message)`):
+
+| Channel | Message | Answer |
+|---|---|---|
+| `forja:item` | `{id, amount}` | the item, as `ItemStack` on the wire, or null |
+| `forja:set_block` | `{block, pos, properties}` | whether the block was set (at the next tick's start) |
+| `forja:state` | `{block, properties}` | the note block state it is drawn as (`minecraft:note_block[...]`), for `/setblock` |
+
+Inside its answer to `forja:block`, a plugin can't call Forja back (Forja is busy with the event): do it in
+`ctx.run_task`. A plugin can also read its own pack with Forja's library, `forja-core` (Engenho builds its
+items with it).
+
+A plugin can ship its content as a Forja pack: write it into `plugins/Forja/packs/<name>/` in `on_load`, which
+runs for every plugin before any is enabled (Engenho does).
+
+## Hitboxes, for furniture
+
+Blocks drawn as note block states are full cubes. Furniture (chairs, tables, lamps, anything not a cube) needs a
+model drawn by a display entity and a hitbox of its own. What a vanilla client can collide with, from Horizon's
+code (which follows vanilla's) and what other furniture plugins do:
+
+| Hitbox | Solid? | Size and place | Notes |
+|---|---|---|---|
+| **Barrier block** | yes, a full block | on the block grid only | Invisible, no light blocked. Can't be broken in survival: the plugin breaks it. The simplest solid hitbox; Oraxen and Crucible use barriers for collision ([Crucible](https://git.mythiccraft.io/mythiccraft/mythiccrucible/-/wikis/Furniture/), [Oraxen](https://docs.oraxen.com/creating-content/furniture/display-entities)). |
+| **Shulker** (invisible, no AI) | yes: players and mobs collide with living shulkers (`canBeCollidedWith`) | 1×1×1 anywhere, off the grid; vanilla scales it with the `minecraft:scale` attribute | CraftEngine offers it as its hard-collision hitbox ([CraftEngine](https://xiao-momi.github.io/craft-engine-wiki/configuration/furniture/variants)). **Horizon applies `scale` to players and mannequins, not yet to mobs**: on Horizon a shulker hitbox is 1×1×1 until the engine scales mobs. |
+| **Happy ghast** (adult, still) | only to stand on: solid to a player whose feet are above its top, or while a player stands on it (`canBeCollidedWith`, the still timeout) | a 4×4 top, scaled in vanilla | Nexo uses it as a scalable collision hitbox from 1.21.6 ([Nexo](https://docs.nexomc.com/mechanics/furniture-mechanic/hitbox/ghast-hitbox)); good for platforms and floors, not walls. Same scale caveat on Horizon. |
+| **Interaction entity** | no | any width and height, anywhere | Takes clicks and hits only; the usual way to make furniture clickable ([Nexo](https://docs.nexomc.com/mechanics/furniture-mechanic/hitbox/interaction-hitbox)). |
+| **Boat** | yes | fixed | Collides like the shulker, but drifts and can be ridden: rarely useful. |
+
+**Plan for Forja's furniture:** an `item_display` with the model; an `interaction` entity to click and break it;
+barriers for the solid parts on the grid, and shulkers for parts off it (1×1×1 on Horizon for now); happy ghasts
+for large surfaces to stand on. The engine needs entities by handle (spawn, move, remove, a click event on
+interaction entities) and `scale` on mobs for the off-grid sizes.
+
 ## Roadmap
 
-1. **Items and the pack** (done): packs, items with textures or models, the resource pack built, served and sent.
-2. **More for items**: recipes (shaped, shapeless, furnace), item behaviours in YAML (on use: a command, a sound,
-   an effect), sounds (`sounds.json` from the packs), armour with its own textures (`equippable`), emojis and
-   GUI backgrounds (fonts).
-3. **Custom blocks** that exist on the server: registered as new blocks, with their own hardness, drops and
-   states, and drawn on clients as an unused vanilla block state (note blocks, tripwire, mushroom blocks...) that
-   the pack retextures. Horizon's engine is patched here, so the swap happens where chunks and block changes are
-   written, not by rewriting packets. Needs the block registry to take blocks outside the game's data.
-4. **Block behaviours**: crops, strippable logs, seats, facing.
-5. **Furniture**: `item_display` entities with a model and a hitbox (needs entities by handle).
+1. **Items and the pack** (done).
+2. **Blocks** (done): states drawn as note block states, placing, breaking, owners.
+3. **More for items**: recipes (shaped, shapeless, furnace) and item behaviours in YAML, sounds
+   (`sounds.json`), armour with its own textures (`equippable`), emojis and GUI backgrounds (fonts).
+4. **Furniture**: display entities with the hitboxes above.
+5. **Block behaviours**: hardness and the right tool, crops, strippable logs, seats; more carriers than note blocks
+   (tripwire, mushroom blocks) for blocks that are not full or let light through.
 
 ## Limits
 

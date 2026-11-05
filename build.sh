@@ -52,9 +52,11 @@ for p in homes dragao; do
   done
 done
 # Forja (forja/, docs/forja.md) builds in this repository's workspace: it only needs the API.
-echo "== Compiling Forja"
-cargo build --locked --release -p forja
-for f in "target/release/libforja.$EXT" "target/release/forja.$EXT"; do
-  [ -f "$f" ] && cp "$f" dist/plugins/
+echo "== Compiling Forja and Engenho"
+cargo build --locked --release -p forja -p engenho
+for p in forja engenho; do
+  for f in "target/release/lib$p.$EXT" "target/release/$p.$EXT"; do
+    [ -f "$f" ] && cp "$f" dist/plugins/
+  done
 done
 echo "== Done: dist/horizon-server-engine and dist/plugins/. Next: see server/README.md"

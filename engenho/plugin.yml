@@ -1,0 +1,17 @@
+name: Engenho
+version: 0.1.0
+description: A tech mod on Forja - machines, energy and ore processing
+authors: [JoaoVictorCoder]
+website: https://github.com/JoaoVictorCoder/horizon-server-plugins
+api-version: '1'
+# Forja draws Engenho's blocks and items, and tells Engenho what happens to them.
+depend: [Forja]
+commands:
+  engenho:
+    description: Engenho's items and machines
+    usage: /<command> give <player> <item> [amount] | info
+    permission: engenho.admin
+permissions:
+  engenho.admin:
+    description: Give Engenho's items
+    default: op

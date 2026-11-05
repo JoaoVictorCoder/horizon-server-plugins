@@ -38,11 +38,21 @@ What is left to do, most important first in each section.
       while playing.
 - [ ] Know when a player declined or failed to load the pack (`PlayerResourcePackStatusEvent`), and kick on a
       declined required pack.
+- [x] Custom blocks with states, drawn as note block states (inert note blocks in the engine), owned by plugins
+      through `forja:block`.
+- [ ] Try blocks in game: placing (facing), breaking, the pack's `note_block.json`, `/forja reload`.
 - [ ] Recipes (shaped, shapeless, furnace), item behaviours in YAML, sounds, armour textures, fonts (emojis, GUI
       backgrounds).
-- [ ] Custom blocks registered on the server and drawn as unused vanilla block states (engine patch), then their
-      behaviours (crops, logs, seats).
-- [ ] Furniture: `item_display` entities with a hitbox (needs entities by handle).
+- [ ] Furniture: `item_display` + interaction entities, barrier and shulker hitboxes (docs/forja.md#hitboxes-for-furniture).
+      Needs entities by handle, a click event for interaction entities, and `minecraft:scale` on mobs.
+- [ ] Hardness and tools for blocks; tripwire and mushroom blocks as carriers.
+
+## Engenho (docs/engenho.md)
+
+- [x] Grinder, electric furnace, press, generator, solar panel, battery, upgrades, engineering table.
+- [ ] Try it in game: menus, energy between neighbours, saving.
+- [ ] Energy cables, item pipes, cobalt ore in new chunks (chunk events), tiers, more machines.
+- [ ] Machines that only tick in loaded chunks; pushing items into chests (block entities).
 
 ## New plugins and tools
 

@@ -67,12 +67,94 @@ impl ItemDef {
     }
 }
 
+/// How a block (or one of its states) looks: a model of the pack, or
+/// textures by slot (`all`; `front`, `side`, `top`, `bottom`; `end`, `side`;
+/// or each face: `north`, `south`, `east`, `west`, `up`, `down`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BlockLook {
+    pub model: Option<String>,
+    pub textures: Vec<(String, String)>,
+}
+
+impl BlockLook {
+    /// This look with `over`'s model and textures on top.
+    pub fn with(&self, over: &BlockLook) -> BlockLook {
+        let mut out = self.clone();
+        if over.model.is_some() {
+            out.model = over.model.clone();
+            out.textures.clear();
+        }
+        for (slot, tex) in &over.textures {
+            match out.textures.iter_mut().find(|(s, _)| s == slot) {
+                Some((_, t)) => *t = tex.clone(),
+                None => out.textures.push((slot.clone(), tex.clone())),
+            }
+        }
+        out
+    }
+}
+
+/// A custom block: placed by the item of the same id, drawn as a note block
+/// state for each combination of its properties.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockDef {
+    /// `engenho:moedor`.
+    pub id: String,
+    pub pack: String,
+    /// The plugin told when the block is placed, broken or used.
+    pub owner: Option<String>,
+    /// In order; `facing` is set from where the player looks.
+    pub properties: Vec<(String, Vec<String>)>,
+    pub look: BlockLook,
+    /// Looks for the states a predicate matches (`active=true`), in order.
+    pub variants: Vec<(Vec<(String, String)>, BlockLook)>,
+    /// Whether breaking it gives its item back (`drops: self`, the default).
+    pub drops_self: bool,
+}
+
+impl BlockDef {
+    /// The look of the state `props`.
+    pub fn look_of(&self, props: &[(String, String)]) -> BlockLook {
+        let mut look = self.look.clone();
+        for (when, over) in &self.variants {
+            if when.iter().all(|kv| props.contains(kv)) {
+                look = look.with(over);
+            }
+        }
+        look
+    }
+
+    /// Its first state: the first value of each property.
+    pub fn default_state(&self) -> Vec<(String, String)> {
+        self.properties
+            .iter()
+            .filter_map(|(k, vs)| Some((k.clone(), vs.first()?.clone())))
+            .collect()
+    }
+
+    /// `props` with each missing or wrong property set to its first value.
+    pub fn complete(&self, props: &[(String, String)]) -> Vec<(String, String)> {
+        self.properties
+            .iter()
+            .filter_map(|(k, vs)| {
+                let v = props
+                    .iter()
+                    .find(|(p, v)| p == k && vs.contains(v))
+                    .map(|(_, v)| v.clone())
+                    .or_else(|| vs.first().cloned())?;
+                Some((k.clone(), v))
+            })
+            .collect()
+    }
+}
+
 /// Everything the packs define.
 #[derive(Clone, Debug, Default)]
 pub struct Content {
     /// Pack folders, in load order (by name).
     pub packs: Vec<PackDir>,
     pub items: Vec<ItemDef>,
+    pub blocks: Vec<BlockDef>,
     /// What was wrong, to log.
     pub warnings: Vec<String>,
 }
@@ -95,6 +177,10 @@ impl Content {
             let first = found.next()?;
             found.next().is_none().then_some(first)
         })
+    }
+
+    pub fn block(&self, id: &str) -> Option<&BlockDef> {
+        self.blocks.iter().find(|b| b.id == id)
     }
 
     /// The Forja item a stack is, by its mark.
@@ -196,6 +282,28 @@ impl Content {
                         }
                     }
                 }
+                "blocks" => {
+                    for (key, def) in section.1.as_map().unwrap_or_default() {
+                        let at = format!("{file}: blocks.{key}");
+                        match block_def(key, def, pack, namespace) {
+                            Ok((block, _)) if self.blocks.iter().any(|b| b.id == block.id) => {
+                                self.warnings
+                                    .push(format!("{at}: `{}` is defined twice", block.id));
+                            }
+                            Ok((_, item)) if self.items.iter().any(|i| i.id == item.id) => {
+                                self.warnings.push(format!(
+                                    "{at}: an item `{}` exists already; a block's item has its id",
+                                    item.id
+                                ));
+                            }
+                            Ok((block, item)) => {
+                                self.blocks.push(block);
+                                self.items.push(item);
+                            }
+                            Err(e) => self.warnings.push(format!("{at}: {e}")),
+                        }
+                    }
+                }
                 other => self.warnings.push(format!(
                     "{file}: `{other}` is not something Forja reads (yet)"
                 )),
@@ -288,6 +396,138 @@ fn item_def(key: &str, v: &Value, pack: &str, namespace: &str) -> Result<ItemDef
         look,
         components,
     })
+}
+
+/// The model id a block's look `index` is drawn with: `ns:block/path` for
+/// the first, `ns:block/path_<n>` for the others.
+pub fn block_model_id(block: &str, index: usize) -> String {
+    let (ns, path) = block.split_once(':').unwrap_or(("minecraft", block));
+    if index == 0 {
+        format!("{ns}:block/{path}")
+    } else {
+        format!("{ns}:block/{path}_{index}")
+    }
+}
+
+const TEXTURE_SLOTS: [&str; 13] = [
+    "all", "front", "side", "top", "bottom", "end", "north", "south", "east", "west", "up", "down",
+    "particle",
+];
+
+fn block_look(v: &Value, namespace: &str) -> Result<BlockLook, String> {
+    let mut look = BlockLook::default();
+    if let Some(m) = v.get("model").and_then(Value::to_text) {
+        look.model = Some(resource_id(&m, namespace)?);
+    }
+    if let Some(t) = v.get("texture").and_then(Value::to_text) {
+        look.textures
+            .push(("all".into(), resource_id(&t, namespace)?));
+    }
+    for (slot, t) in v
+        .get("textures")
+        .and_then(Value::as_map)
+        .unwrap_or_default()
+    {
+        if !TEXTURE_SLOTS.contains(&slot.as_str()) {
+            return Err(format!(
+                "`{slot}` is not a texture slot ({})",
+                TEXTURE_SLOTS.join(", ")
+            ));
+        }
+        let t = t
+            .to_text()
+            .ok_or_else(|| format!("textures.{slot}: a texture id"))?;
+        look.textures
+            .push((slot.clone(), resource_id(&t, namespace)?));
+    }
+    Ok(look)
+}
+
+fn block_def(
+    key: &str,
+    v: &Value,
+    pack: &str,
+    namespace: &str,
+) -> Result<(BlockDef, ItemDef), String> {
+    let id = resource_id(key, namespace)?;
+    let ns = id.split(':').next().unwrap_or(namespace).to_owned();
+    let text = |k: &str| v.get(k).and_then(Value::to_text);
+    let mut properties = Vec::new();
+    for (name, values) in v
+        .get("properties")
+        .and_then(Value::as_map)
+        .unwrap_or_default()
+    {
+        let values = values.to_strings();
+        if values.is_empty() {
+            return Err(format!("properties.{name}: list its values"));
+        }
+        properties.push((name.clone(), values));
+    }
+    let states: usize = properties.iter().map(|(_, v)| v.len()).product();
+    if states > 64 {
+        return Err(format!("{states} states; 64 at most for one block"));
+    }
+    let look = block_look(v, &ns)?;
+    if look.model.is_none() && look.textures.is_empty() {
+        return Err("give it a `texture`, `textures` or a `model`".into());
+    }
+    let mut variants = Vec::new();
+    for (when, over) in v
+        .get("variants")
+        .and_then(Value::as_map)
+        .unwrap_or_default()
+    {
+        let predicate: Vec<(String, String)> = when
+            .split(',')
+            .filter_map(|kv| kv.split_once('='))
+            .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+            .collect();
+        for (k, val) in &predicate {
+            if !properties.iter().any(|(p, vs)| p == k && vs.contains(val)) {
+                return Err(format!(
+                    "variants.{when}: no property {k} with the value {val}"
+                ));
+            }
+        }
+        variants.push((predicate, block_look(over, &ns)?));
+    }
+    let block = BlockDef {
+        id: id.clone(),
+        pack: pack.to_owned(),
+        owner: text("owner"),
+        properties,
+        look,
+        variants,
+        drops_self: text("drops").as_deref() != Some("none"),
+    };
+    let material = resource_id(
+        &text("material").unwrap_or_else(|| "paper".into()),
+        "minecraft",
+    )?;
+    let mut components = Vec::new();
+    if let Some(map) = v.get("components").and_then(Value::as_map) {
+        for (k, c) in map {
+            components.push((resource_id(k, "minecraft")?, snbt(c)));
+        }
+    }
+    let item = ItemDef {
+        id: id.clone(),
+        pack: pack.to_owned(),
+        material,
+        name: text("name").map(|n| color::translate('&', &n)),
+        lore: v
+            .get("lore")
+            .map(Value::to_strings)
+            .unwrap_or_default()
+            .iter()
+            .map(|l| color::translate('&', l))
+            .collect(),
+        // Its item looks like the block in its first state.
+        look: Look::Model(block_model_id(&id, 0)),
+        components,
+    };
+    Ok((block, item))
 }
 
 /// A YAML value as SNBT, for a component: maps become compounds, lists
@@ -413,6 +653,63 @@ items:
             "{arg}"
         );
         assert!(c.item("simples").unwrap().stack(1).model.is_none());
+    }
+
+    #[test]
+    fn reads_blocks_and_their_items() {
+        let yml = r#"
+blocks:
+  moedor:
+    owner: Engenho
+    name: '&fGrinder'
+    properties:
+      facing: [north, east, south, west]
+      active: [false, true]
+    textures:
+      front: block/moedor_front
+      side: block/casing
+      top: block/casing_top
+    variants:
+      active=true:
+        textures:
+          front: block/moedor_front_on
+  bloco:
+    texture: block/cobalto
+  ruim:
+    properties:
+      x: [a]
+    texture: block/x
+    variants:
+      x=b:
+        texture: block/y
+"#;
+        let mut c = Content::default();
+        c.load_config("b.yml", "engenho", "engenho", &yaml::parse(yml).unwrap());
+        assert_eq!(c.blocks.len(), 2, "{:?}", c.warnings);
+        assert_eq!(c.warnings.len(), 1);
+        let m = c.block("engenho:moedor").unwrap();
+        assert_eq!(m.owner.as_deref(), Some("Engenho"));
+        let on = [
+            ("facing".to_owned(), "east".to_owned()),
+            ("active".to_owned(), "true".to_owned()),
+        ];
+        let look = m.look_of(&on);
+        assert!(
+            look.textures
+                .contains(&("front".into(), "engenho:block/moedor_front_on".into()))
+        );
+        assert!(
+            look.textures
+                .contains(&("side".into(), "engenho:block/casing".into()))
+        );
+        assert_eq!(m.default_state()[0], ("facing".into(), "north".into()));
+        assert_eq!(
+            m.complete(&[("active".into(), "true".into())])[0].1,
+            "north"
+        );
+        let item = c.item("engenho:moedor").unwrap();
+        assert_eq!(item.material, "minecraft:paper");
+        assert_eq!(item.look, Look::Model("engenho:block/moedor".into()));
     }
 
     #[test]

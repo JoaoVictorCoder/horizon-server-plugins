@@ -35,7 +35,11 @@ items:
     texture: item/rubi     # resources/assets/exemplo/textures/item/rubi.png
 ```
 
-Now: custom items. Next: recipes, custom blocks that exist on the server, furniture ([roadmap](docs/forja.md#roadmap)).
+Now: custom items and custom blocks with states. Next: furniture with hitboxes, recipes
+([roadmap](docs/forja.md#roadmap)).
+
+**[Engenho](docs/engenho.md)** (`engenho/`), built on Forja: a tech mod with machines (grinder, electric furnace,
+press), generators, batteries, upgrades and an engineering table.
 
 ## Plugins built on it
 
@@ -74,7 +78,7 @@ The script downloads Horizon at the commit in `engine/HORIZON_COMMIT`, adds the 
 `engine/horizon.patch` and compiles only the server (no sound, no controllers). The result:
 
 - `dist/horizon-server-engine`: the server;
-- `dist/plugins/`: the example plugins and Forja.
+- `dist/plugins/`: the example plugins, Forja and Engenho.
 
 The first build takes a while (about 10 minutes); later ones are quick.
 
@@ -138,7 +142,9 @@ cargo run -p horizon-plugin-host --example plugin_dry_run -- path/to/plugins "co
 |---|---|
 | `api/` | `horizon-plugin-api`: the plugin API (no dependencies, a C ABI) and the examples (`api/examples/`) |
 | `host/` | `horizon-plugin-host`: loads `plugins/`, events, commands, permissions, reload |
-| `forja/` | Forja, server-side mods: custom items and the resource pack ([docs/forja.md](docs/forja.md)) |
+| `forja/` | Forja, server-side mods: custom items, blocks and the resource pack ([docs/forja.md](docs/forja.md)) |
+| `forja-core/` | Forja's library (packs, blocks, the pack's zip and HTTP server), for plugins built on Forja |
+| `engenho/` | Engenho, a tech mod on Forja ([docs/engenho.md](docs/engenho.md)) |
 | `engine/` | `horizon.patch` (the changes to Horizon's engine) and the commit it applies to |
 | `server/` | the server folder, with `iniciar.sh` |
 | `docs/plugins.md` | the API documentation |
