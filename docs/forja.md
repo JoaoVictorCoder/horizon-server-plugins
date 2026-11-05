@@ -228,15 +228,17 @@ code (which follows vanilla's) and what other furniture plugins do:
 | Hitbox | Solid? | Size and place | Notes |
 |---|---|---|---|
 | **Barrier block** | yes, a full block | on the block grid only | Invisible, no light blocked. Can't be broken in survival: the plugin breaks it. The simplest solid hitbox; Oraxen and Crucible use barriers for collision ([Crucible](https://git.mythiccraft.io/mythiccraft/mythiccrucible/-/wikis/Furniture/), [Oraxen](https://docs.oraxen.com/creating-content/furniture/display-entities)). |
-| **Shulker** (invisible, no AI) | yes: players and mobs collide with living shulkers (`canBeCollidedWith`) | 1×1×1 anywhere, off the grid; vanilla scales it with the `minecraft:scale` attribute | CraftEngine offers it as its hard-collision hitbox ([CraftEngine](https://xiao-momi.github.io/craft-engine-wiki/configuration/furniture/variants)). **Horizon applies `scale` to players and mannequins, not yet to mobs**: on Horizon a shulker hitbox is 1×1×1 until the engine scales mobs. |
+| **Shulker** (invisible, no AI) | yes: players and mobs collide with living shulkers (`canBeCollidedWith`) | a cube anywhere, off the grid. **Its open shell is part of the box**: the box grows toward the face it is attached to by the lid's lift (`getPhysicalPeek`: `Peek` 0 → 1 block, 100 → 2 blocks, smoothly between), so one shulker is 1×1×1 up to 1×2×1, along any of the six axes. Vanilla also scales the whole box with `minecraft:scale` | CraftEngine offers it as its hard-collision hitbox ([CraftEngine](https://xiao-momi.github.io/craft-engine-wiki/configuration/furniture/variants)). With no AI the peek goal doesn't run, so a `Peek` set in its data stays: a fixed height. **On Horizon** the peek box is there (`mobs/shulker.rs` follows `Shulker.getProgressDeltaAabb` and pushes what it grows into), but `scale` is applied to players and mannequins, not yet to mobs. |
 | **Happy ghast** (adult, still) | only to stand on: solid to a player whose feet are above its top, or while a player stands on it (`canBeCollidedWith`, the still timeout) | a 4×4 top, scaled in vanilla | Nexo uses it as a scalable collision hitbox from 1.21.6 ([Nexo](https://docs.nexomc.com/mechanics/furniture-mechanic/hitbox/ghast-hitbox)); good for platforms and floors, not walls. Same scale caveat on Horizon. |
 | **Interaction entity** | no | any width and height, anywhere | Takes clicks and hits only; the usual way to make furniture clickable ([Nexo](https://docs.nexomc.com/mechanics/furniture-mechanic/hitbox/interaction-hitbox)). |
 | **Boat** | yes | fixed | Collides like the shulker, but drifts and can be ridden: rarely useful. |
 
 **Plan for Forja's furniture:** an `item_display` with the model; an `interaction` entity to click and break it;
-barriers for the solid parts on the grid, and shulkers for parts off it (1×1×1 on Horizon for now); happy ghasts
-for large surfaces to stand on. The engine needs entities by handle (spawn, move, remove, a click event on
-interaction entities) and `scale` on mobs for the off-grid sizes.
+barriers for the solid parts on the grid, and shulkers for parts off it. A box of any size is shulkers: `scale`
+sets its width (and the base height), the peek stretches it up to twice that along one axis, and a few shulkers
+cover what one can't. On Horizon, until mobs take `scale`, that is 1 to 2 blocks along one axis with a 1×1 base;
+happy ghasts give large surfaces to stand on. The engine needs entities by handle (spawn, move, remove, a click
+event on interaction entities) and `scale` on mobs.
 
 ## Roadmap
 
