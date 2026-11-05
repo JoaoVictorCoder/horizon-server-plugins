@@ -19,6 +19,24 @@ A **Minecraft: Java Edition 26.3** server in Rust with **Paper-style plugins**, 
   - **Homes**: `/sethome`, `/home`, `/delhome`, `/homes` (a menu), spawn protection.
   - **Dragão**: `/dragao [colour]` (or `/dragon`) builds a little dragon out of blocks.
 
+## Forja: server-side mods
+
+**[Forja](docs/forja.md)** (`forja/`) adds content with textures of its own that vanilla clients see without
+installing anything, in the spirit of Paper's CraftEngine and ItemsAdder. Packs in `plugins/Forja/packs/` define
+items in YAML and bring their textures and models. Forja builds the resource pack, serves it over HTTP and sends
+it to players as they join and after `/forja reload`.
+
+```yaml
+# plugins/Forja/packs/exemplo/config/items.yml
+items:
+  rubi:
+    material: emerald
+    name: '&cRuby'
+    texture: item/rubi     # resources/assets/exemplo/textures/item/rubi.png
+```
+
+Now: custom items. Next: recipes, custom blocks that exist on the server, furniture ([roadmap](docs/forja.md#roadmap)).
+
 ## Plugins built on it
 
 Full plugins live in repositories of their own and depend on `horizon-plugin-api` through `git`:
@@ -56,7 +74,7 @@ The script downloads Horizon at the commit in `engine/HORIZON_COMMIT`, adds the 
 `engine/horizon.patch` and compiles only the server (no sound, no controllers). The result:
 
 - `dist/horizon-server-engine`: the server;
-- `dist/plugins/`: the example plugins.
+- `dist/plugins/`: the example plugins and Forja.
 
 The first build takes a while (about 10 minutes); later ones are quick.
 
@@ -120,9 +138,11 @@ cargo run -p horizon-plugin-host --example plugin_dry_run -- path/to/plugins "co
 |---|---|
 | `api/` | `horizon-plugin-api`: the plugin API (no dependencies, a C ABI) and the examples (`api/examples/`) |
 | `host/` | `horizon-plugin-host`: loads `plugins/`, events, commands, permissions, reload |
+| `forja/` | Forja, server-side mods: custom items and the resource pack ([docs/forja.md](docs/forja.md)) |
 | `engine/` | `horizon.patch` (the changes to Horizon's engine) and the commit it applies to |
 | `server/` | the server folder, with `iniciar.sh` |
 | `docs/plugins.md` | the API documentation |
+| `docs/forja.md` | Forja's documentation |
 | `TODO.md` | what is left to do |
 
 ## License and credits

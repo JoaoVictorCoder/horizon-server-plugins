@@ -20,7 +20,7 @@ use horizon_plugin_api::color;
 use horizon_plugin_api::description::{CommandSpec, LoadOrder, PluginDescription};
 use horizon_plugin_api::event::EventPriority;
 use horizon_plugin_api::types::{
-    Block, BlockPos, CommandSender, ItemStack, Location, Menu, Player, Uuid, Wire,
+    Block, BlockPos, CommandSender, ItemStack, Location, Menu, Player, ResourcePack, Uuid, Wire,
 };
 use permissions::Permissions;
 use std::cell::{Cell, RefCell};
@@ -74,10 +74,20 @@ pub trait Backend {
         let _ = id;
         None
     }
+    /// Offers `uuid` a resource pack (`Player.setResourcePack`): whether
+    /// they are on to get it.
+    fn resource_pack(&mut self, uuid: Uuid, pack: &ResourcePack) -> bool {
+        let _ = (uuid, pack);
+        false
+    }
     /// The server's version, for `/version` and `Server::version`.
     fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_owned()
     }
+}
+
+fn is_sha1(hash: &str) -> bool {
+    hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// The message a player without a command's permission gets (Bukkit's).
@@ -1307,6 +1317,22 @@ impl Shared {
             "players" => self.backend()?.players().to_wire(),
             "send_message" => Value::Bool(self.backend()?.tell(uuid()?, &text("message"))),
             "action_bar" => Value::Bool(self.backend()?.action_bar(uuid()?, &text("message"))),
+            "resource_pack" => {
+                let pack = ResourcePack {
+                    id: args.get("id").and_then(Uuid::from_wire).unwrap_or_default(),
+                    url: text("url"),
+                    sha1: text("hash"),
+                    required: args
+                        .get("required")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    prompt: args.get("prompt").and_then(Value::to_text),
+                };
+                if pack.url.is_empty() || !(pack.sha1.is_empty() || is_sha1(&pack.sha1)) {
+                    return Err("a resource pack needs a url and a 40-digit hex sha1".into());
+                }
+                Value::Bool(self.backend()?.resource_pack(uuid()?, &pack))
+            }
             "broadcast" => Value::from(self.backend()?.broadcast(&text("message"))),
             "dispatch_command" => Value::Bool(self.console(Some(from), &text("line"))?),
             "teleport" => {

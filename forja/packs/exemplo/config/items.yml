@@ -1,0 +1,33 @@
+# Items: an id (exemplo:rubi, or just rubi in this pack's namespace) and
+#   material:   the vanilla item underneath, whose behaviour it keeps
+#   texture:    a flat item from assets/<ns>/textures/<path>.png
+#   parent:     generated (default) or handheld, held like a tool
+#   model:      instead of a texture, a model of the pack (assets/<ns>/models/<path>.json)
+#   name, lore: with & colour codes
+#   components: more item components, as in /give (max_stack_size, rarity...)
+# Give one: /forja give <player> exemplo:rubi
+
+items:
+  rubi:
+    material: emerald
+    name: '&cRuby'
+    lore:
+      - '&7A gem from deep below.'
+    texture: item/rubi
+    components:
+      rarity: rare
+
+  espada_rubi:
+    material: diamond_sword
+    name: '&cRuby Sword'
+    texture: item/espada_rubi
+    parent: handheld
+    components:
+      rarity: rare
+      enchantment_glint_override: false
+
+  picareta_rubi:
+    material: diamond_pickaxe
+    name: '&cRuby Pickaxe'
+    texture: item/picareta_rubi
+    parent: handheld

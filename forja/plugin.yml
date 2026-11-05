@@ -1,0 +1,15 @@
+name: Forja
+version: 0.1.0
+description: Server-side mods with their own textures, in a resource pack the server builds and serves
+authors: [JoaoVictorCoder]
+website: https://github.com/JoaoVictorCoder/horizon-server-plugins
+api-version: '1'
+commands:
+  forja:
+    description: Forja's items and resource pack
+    usage: /<command> give <player> <item> [amount] | get <item> [amount] | list [pack] | pack | reload
+    permission: forja.admin
+permissions:
+  forja.admin:
+    description: Give Forja's items and rebuild its pack
+    default: op

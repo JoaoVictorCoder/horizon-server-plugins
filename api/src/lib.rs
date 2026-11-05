@@ -64,7 +64,7 @@ pub mod prelude {
     pub use crate::event::*;
     pub use crate::types::{
         Block, BlockFace, BlockPos, CommandSender, Entity, GameMode, ItemStack, Location, Menu,
-        Player, Uuid, World, worlds,
+        Player, ResourcePack, Uuid, World, worlds,
     };
     pub use crate::scoreboard::{BarColor, BarStyle, BossBar, DisplaySlot, Objective, Team};
     pub use crate::{

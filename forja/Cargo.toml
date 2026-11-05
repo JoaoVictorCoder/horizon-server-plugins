@@ -1,0 +1,16 @@
+[package]
+name = "forja"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Forja: server-side mods for Horizon (custom items with their own textures, a resource pack built and served by the server)"
+
+# A plugin like any other: `cargo build --release -p forja`, then copy
+# target/release/libforja.so (forja.dll, libforja.dylib) into plugins/.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# No dependencies but the API: the zip, SHA-1 and HTTP server are small and in src/.
+[dependencies]
+horizon-plugin-api = { path = "../api" }

@@ -1,0 +1,26 @@
+# Forja: server-side mods with their own textures (docs/forja.md).
+# The content is in plugins/Forja/packs/: one folder per pack, with
+# config/*.yml (what it adds) and resources/ (textures, models, sounds).
+
+resource-pack:
+  # Offer the pack to players as they join, and again after /forja reload.
+  send: true
+  # A player who declines a required pack can't play here.
+  required: false
+  # Shown under the client's question, with & colour codes.
+  prompt: '&6This server has textures of its own.'
+  # The pack's description in the client's pack list.
+  description: '&6Forja'
+
+  # The HTTP server Forja runs to hand the pack out.
+  http:
+    enabled: true
+    host: 0.0.0.0
+    port: 8163
+  # Where players download it from, without the path, as they reach this
+  # machine: http://play.example.com:8163. Empty: the machine's address on
+  # its network, which only works for players on the same network.
+  # With the HTTP server off, put the URL of a host that serves
+  # plugins/Forja/pack.zip, such as a CDN, ending in the file:
+  # https://cdn.example.com/pack.zip
+  public-url: ''

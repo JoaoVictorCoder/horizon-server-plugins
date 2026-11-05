@@ -171,6 +171,12 @@ They come from the native mods' hook points (Horizon's docs/native-mods.md), at 
   through vanilla's commands, so the world keeps them.
 - **Inventories**: `Player::set_slot`, `set_equipment`, `clear_inventory`, `give_item` (with its name and lore),
   `inventory`; chest menus with `open_menu`.
+- **Item components**: `ItemStack::with_model` (`item_model`, a model from a resource pack), `with_data` and
+  `data` (text tags in `custom_data`, which stay on the item: Bukkit's `PersistentDataContainer`), and
+  `with_component` for any other component `/give` takes. Items the server hands plugins carry their model and
+  custom data.
+- **Resource packs**: `Player::send_resource_pack(&ResourcePack)` offers a player a pack in game (Paper's
+  `setResourcePack`); one sent again with the same `id` replaces it. [Forja](forja.md) builds and serves one.
 - **Entities**: `World::entities` lists the mobs of the world the server holds at the moment (a player's own,
   inside their event); `World::kill_entities` takes a selector's filter.
 - **Where players look**: `player.location.yaw`, `pitch` and `facing()`.

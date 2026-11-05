@@ -1,0 +1,3 @@
+# A Forja pack. Its id namespace is the folder's name unless set here.
+namespace: exemplo
+# enabled: false   # to leave the pack out without deleting it

@@ -1,7 +1,7 @@
 # The plugin API and its host, for plugin authors: `cargo build -p horizon-plugin-api --example homes`.
 # The server itself is Horizon with engine/horizon.patch: ./build.sh.
 [workspace]
-members = ["api", "host"]
+members = ["api", "host", "forja"]
 resolver = "2"
 
 [workspace.package]

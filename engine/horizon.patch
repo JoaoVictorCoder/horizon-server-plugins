@@ -408,10 +408,10 @@ index 598c794..d499943 100644
              self.native_feedback(
 diff --git a/crates/horizon-client/src/game/plugins.rs b/crates/horizon-client/src/game/plugins.rs
 new file mode 100644
-index 0000000..f4b29f7
+index 0000000..649bb47
 --- /dev/null
 +++ b/crates/horizon-client/src/game/plugins.rs
-@@ -0,0 +1,963 @@
+@@ -0,0 +1,1066 @@
 +//! Server plugins (docs/plugins.md): a dedicated server loads the plugin
 +//! libraries in `plugins/` with `horizon-plugin-host` when its world is
 +//! ready, and hands them what the native hook points hear, at the same
@@ -437,7 +437,7 @@ index 0000000..f4b29f7
 +use horizon_plugin_api::Value;
 +use horizon_plugin_api::types::{
 +    Block, BlockFace, BlockPos, CommandSender, Entity, GameMode, ItemStack, Location, Menu, Player,
-+    Uuid, Wire, worlds,
++    ResourcePack, Uuid, Wire, worlds,
 +};
 +use horizon_plugin_host::{Backend, PluginHost};
 +use horizon_protocol::packets::play::{self, Clientbound as C};
@@ -483,11 +483,31 @@ index 0000000..f4b29f7
 +}
 +
 +fn stack_of(s: &GameStack) -> ItemStack {
++    use horizon_world::nbt::Tag;
++    let extra = s.extra.as_deref();
++    let model = match extra.and_then(|e| e.other("minecraft:item_model")) {
++        Some(Tag::String(m)) => Some(m.to_string_lossy()),
++        _ => None,
++    };
++    // The custom data's text tags (`forja:id`), as plugins set them.
++    let data = match extra.and_then(|e| e.other("minecraft:custom_data")) {
++        Some(Tag::Compound(c)) => c
++            .iter()
++            .filter_map(|(k, v)| match v {
++                Tag::String(v) => Some((k.to_string_lossy(), v.to_string_lossy())),
++                _ => None,
++            })
++            .collect(),
++        _ => Vec::new(),
++    };
 +    ItemStack {
 +        kind: s.item.to_string(),
 +        amount: s.count,
-+        name: s.extra.as_ref().and_then(|e| e.custom_name_plain()),
++        name: extra.and_then(|e| e.custom_name_plain()),
 +        lore: Vec::new(),
++        model,
++        data,
++        components: Vec::new(),
 +    }
 +}
 +
@@ -508,7 +528,41 @@ index 0000000..f4b29f7
 +            horizon_world::nbt::Tag::List(lines),
 +        ));
 +    }
-+    let plain = i.name.is_none() && i.lore.is_empty();
++    if let Some(m) = &i.model {
++        data.other.push((
++            "minecraft:item_model".to_owned(),
++            horizon_world::nbt::Tag::String(m.as_str().into()),
++        ));
++    }
++    if !i.data.is_empty() {
++        let tags = i
++            .data
++            .iter()
++            .map(|(k, v)| {
++                (
++                    k.as_str().into(),
++                    horizon_world::nbt::Tag::String(v.as_str().into()),
++                )
++            })
++            .collect();
++        data.other.push((
++            "minecraft:custom_data".to_owned(),
++            horizon_world::nbt::Tag::Compound(tags),
++        ));
++    }
++    for (id, value) in &i.components {
++        match horizon_world::nbt::parse_snbt(value) {
++            Ok((tag, _)) => data
++                .other
++                .push((horizon_plugin_api::types::namespaced(id), tag)),
++            Err(e) => {
++                super::dedicated::log("WARN", &format!("[plugins] component {id}={value}: {e}"))
++            }
++        }
++    }
++    // StackData keeps the other components in key order.
++    data.other.sort_by(|a, b| a.0.cmp(&b.0));
++    let plain = i.is_plain();
 +    GameStack {
 +        item: horizon_plugin_api::types::namespaced(&i.kind).into(),
 +        count: i.amount.clamp(1, 99),
@@ -618,6 +672,19 @@ index 0000000..f4b29f7
 +    }
 +    fn action_bar(&mut self, uuid: Uuid, message: &str) -> bool {
 +        self.game.native_action_bar(uuid.0, Text::legacy(message))
++    }
++    fn resource_pack(&mut self, uuid: Uuid, pack: &ResourcePack) -> bool {
++        let push = horizon_protocol::packets::configuration::ResourcePackPush {
++            id: pack.id.0,
++            url: pack.url.clone(),
++            hash: pack.sha1.to_ascii_lowercase(),
++            required: pack.required,
++            prompt: pack
++                .prompt
++                .as_ref()
++                .map(|p| component_nbt(&Text::legacy(p).component())),
++        };
++        self.game.plugins_send_to(uuid.0, C::ResourcePackPush(push))
 +    }
 +    fn can_run_commands(&self) -> bool {
 +        self.game.lan_acting.is_none() && self.game.lan.is_some()
@@ -992,6 +1059,23 @@ index 0000000..f4b29f7
 +        cancelled
 +    }
 +
++    /// A packet to one player, the acting one too (whose packets wait in
++    /// `guest_packets`): false when they aren't on.
++    fn plugins_send_to(&mut self, uuid: u128, packet: C) -> bool {
++        if self.lan_acting_uuid == Some(uuid) {
++            self.guest_packets.push(packet);
++            return true;
++        }
++        let Some(host) = &self.lan else {
++            return false;
++        };
++        let Some(g) = host.hub.guests.iter().find(|g| g.placed && g.uuid == uuid) else {
++            return false;
++        };
++        host.hub.send_to(g.conn, &packet);
++        true
++    }
++
 +    /// `PlayerInteractEvent` on a block, before the block's own use.
 +    pub(super) fn plugins_right_click_block(&mut self, pos: [i32; 3], face: [i32; 3]) -> bool {
 +        let world = self.plugins_world();
@@ -1171,7 +1255,9 @@ index 0000000..f4b29f7
 +            .with("block", block.to_wire())
 +            .with("face", BlockFace::from_offset(face).to_wire())
 +            .with("item", item.to_wire());
-+        plugins.fire(&mut GameBackend { game: self }, "player_interact", data).1
++        plugins
++            .fire(&mut GameBackend { game: self }, "player_interact", data)
++            .1
 +    }
 +
 +    /// `PlayerJoinEvent` as a guest is placed: what everyone is told.
@@ -1188,7 +1274,8 @@ index 0000000..f4b29f7
 +            None => return,
 +            Some(s) if s == vanilla => {
 +                let who = self.player_text(&player.name, player.uuid.0);
-+                Text::translate("multiplayer.player.joined", &[who]).with_color(horizon_client::text::YELLOW)
++                Text::translate("multiplayer.player.joined", &[who])
++                    .with_color(horizon_client::text::YELLOW)
 +            }
 +            Some(s) => Text::legacy(&s),
 +        };
@@ -1196,14 +1283,23 @@ index 0000000..f4b29f7
 +    }
 +
 +    /// `PlayerQuitEvent` once a guest left: what everyone is told.
-+    pub(super) fn plugins_left(&mut self, host: &mut super::lan::LanHost, guest: &horizon_client::lan::guest::Guest) {
++    pub(super) fn plugins_left(
++        &mut self,
++        host: &mut super::lan::LanHost,
++        guest: &horizon_client::lan::guest::Guest,
++    ) {
 +        let Some(plugins) = self::host() else {
 +            return;
 +        };
 +        let player = Player {
 +            uuid: Uuid(guest.uuid),
 +            name: guest.name.clone(),
-+            location: Location::new(&guest.dimension, guest.position[0], guest.position[1], guest.position[2]),
++            location: Location::new(
++                &guest.dimension,
++                guest.position[0],
++                guest.position[1],
++                guest.position[2],
++            ),
 +            game_mode: GameMode::from_id(guest.game_mode),
 +            health: guest.health,
 +            op_level: guest.permission,
@@ -1214,7 +1310,8 @@ index 0000000..f4b29f7
 +            None => return,
 +            Some(s) if s == vanilla => {
 +                let who = self.player_text(&player.name, player.uuid.0);
-+                Text::translate("multiplayer.player.left", &[who]).with_color(horizon_client::text::YELLOW)
++                Text::translate("multiplayer.player.left", &[who])
++                    .with_color(horizon_client::text::YELLOW)
 +            }
 +            Some(s) => Text::legacy(&s),
 +        };
@@ -1234,7 +1331,11 @@ index 0000000..f4b29f7
 +            return None;
 +        }
 +        let player = Self::plugins_guest(host, conn)?;
-+        plugins.complete(&mut GameBackend { game: self }, CommandSender::Player(player), command)
++        plugins.complete(
++            &mut GameBackend { game: self },
++            CommandSender::Player(player),
++            command,
++        )
 +    }
 +
 +    /// `EntitySpawnEvent`: whether a plugin stopped `kind` coming at `at`.
@@ -1251,7 +1352,9 @@ index 0000000..f4b29f7
 +            location: Location::new(self.dim.id(), at[0], at[1], at[2]),
 +        };
 +        let data = Value::map().with("entity", entity.to_wire());
-+        plugins.fire(&mut GameBackend { game: self }, "entity_spawn", data).1
++        plugins
++            .fire(&mut GameBackend { game: self }, "entity_spawn", data)
++            .1
 +    }
 +
 +    /// `EntityDeathEvent`.

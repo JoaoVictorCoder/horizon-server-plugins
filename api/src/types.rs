@@ -454,6 +454,16 @@ pub struct ItemStack {
     pub name: Option<String>,
     /// Lines under the name, with `§` codes.
     pub lore: Vec<String>,
+    /// `minecraft:item_model`: the model the client draws it with
+    /// (`forja:rubi`, from the server's resource pack), instead of its kind's.
+    pub model: Option<String>,
+    /// Text tags in `minecraft:custom_data`, which the game keeps on the item
+    /// wherever it goes (Bukkit's `PersistentDataContainer`): plugins mark
+    /// their items with them (`forja:id` → `rubi:espada`) and know them again.
+    pub data: Vec<(String, String)>,
+    /// More components for `/give`, as SNBT: `("max_stack_size", "16")`,
+    /// `("enchantment_glint_override", "true")`. Given, not read back.
+    pub components: Vec<(String, String)>,
 }
 
 impl ItemStack {
@@ -472,13 +482,48 @@ impl ItemStack {
         self.lore.push(line.to_owned());
         self
     }
+    /// Drawn with `model` (`minecraft:item_model`).
+    pub fn with_model(mut self, model: &str) -> Self {
+        self.model = Some(namespaced(model));
+        self
+    }
+    /// With the tag `key` = `value` in its custom data.
+    pub fn with_data(mut self, key: &str, value: &str) -> Self {
+        self.set_data(key, value);
+        self
+    }
+    /// Sets the tag `key` of its custom data.
+    pub fn set_data(&mut self, key: &str, value: &str) {
+        match self.data.iter_mut().find(|(k, _)| k == key) {
+            Some((_, v)) => *v = value.to_owned(),
+            None => self.data.push((key.to_owned(), value.to_owned())),
+        }
+    }
+    /// The tag `key` of its custom data.
+    pub fn data(&self, key: &str) -> Option<&str> {
+        self.data
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+    /// With the component `id` (`max_stack_size`) set to `snbt` (`16`).
+    pub fn with_component(mut self, id: &str, snbt: &str) -> Self {
+        let id = namespaced(id);
+        self.components.retain(|(k, _)| namespaced(k) != id);
+        self.components.push((id, snbt.to_owned()));
+        self
+    }
     pub fn is(&self, id: &str) -> bool {
         self.kind == namespaced(id)
     }
     /// Whether it has no name or lore, the only items the server counts,
     /// takes and gives by kind.
     pub fn is_plain(&self) -> bool {
-        self.name.is_none() && self.lore.is_empty()
+        self.name.is_none()
+            && self.lore.is_empty()
+            && self.model.is_none()
+            && self.data.is_empty()
+            && self.components.is_empty()
     }
     /// The item as `/give` and `/item` read it, with its name and lore as
     /// components: `minecraft:diamond[custom_name={text:"§bShiny"}]`.
@@ -494,6 +539,20 @@ impl ItemStack {
         if !self.lore.is_empty() {
             let lines: Vec<String> = self.lore.iter().map(|l| text(l)).collect();
             parts.push(format!("lore=[{}]", lines.join(",")));
+        }
+        if let Some(m) = &self.model {
+            parts.push(format!("item_model={}", snbt_string(m)));
+        }
+        if !self.data.is_empty() {
+            let tags: Vec<String> = self
+                .data
+                .iter()
+                .map(|(k, v)| format!("{}:{}", snbt_string(k), snbt_string(v)))
+                .collect();
+            parts.push(format!("custom_data={{{}}}", tags.join(",")));
+        }
+        for (id, value) in &self.components {
+            parts.push(format!("{id}={value}"));
         }
         format!("{}[{}]", self.kind, parts.join(","))
     }
@@ -521,6 +580,9 @@ impl Wire for ItemStack {
             .with("amount", self.amount)
             .with("name", self.name.clone())
             .with("lore", self.lore.clone())
+            .with("model", self.model.clone())
+            .with("data", pairs(&self.data))
+            .with("components", pairs(&self.components))
     }
     fn from_wire(v: &Value) -> Option<Self> {
         Some(ItemStack {
@@ -531,8 +593,28 @@ impl Wire for ItemStack {
                 .map_or(1, |a| a.clamp(0, i64::from(u32::MAX)) as u32),
             name: v.get("name").and_then(Value::to_text),
             lore: v.get("lore").map(Value::to_strings).unwrap_or_default(),
+            model: v.get("model").and_then(Value::to_text),
+            data: v.get("data").map(from_pairs).unwrap_or_default(),
+            components: v.get("components").map(from_pairs).unwrap_or_default(),
         })
     }
+}
+
+/// Text pairs as a map on the wire.
+fn pairs(list: &[(String, String)]) -> Value {
+    Value::Map(
+        list.iter()
+            .map(|(k, v)| (k.clone(), Value::from(v)))
+            .collect(),
+    )
+}
+
+fn from_pairs(v: &Value) -> Vec<(String, String)> {
+    v.as_map()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|(k, v)| Some((k.clone(), v.to_text()?)))
+        .collect()
 }
 
 /// An entity other than a player, as an event saw it.
@@ -610,6 +692,18 @@ impl Wire for GameMode {
     fn from_wire(v: &Value) -> Option<Self> {
         Some(GameMode::from_id(i32::from_wire(v)?))
     }
+}
+
+/// A resource pack offered to a player ([`Player::send_resource_pack`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ResourcePack {
+    /// Which pack: one sent again with the same id replaces it.
+    pub id: Uuid,
+    pub url: String,
+    /// The zip's SHA-1, lower-case hex; the client caches the pack by it.
+    pub sha1: String,
+    pub required: bool,
+    pub prompt: Option<String>,
 }
 
 /// A player on the server, as they were when the plugin got them; methods
@@ -701,6 +795,25 @@ impl Player {
     /// A line over their hotbar.
     pub fn send_action_bar(&self, message: &str) -> bool {
         call("action_bar", self.uuid_args().with("message", message))
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+    /// Offers them a resource pack (Paper's `Player.setResourcePack`): the
+    /// client downloads `url` unless it has the pack whose SHA-1 is
+    /// `sha1` (40 hex digits) already, and keeps it until it leaves. A new
+    /// pack with the same `id` takes the old one's place. `required` makes
+    /// the prompt's only other choice leaving; `prompt` (with `§` codes) is
+    /// shown under it.
+    pub fn send_resource_pack(&self, pack: &ResourcePack) -> bool {
+        let args = self
+            .uuid_args()
+            .with("id", pack.id.to_wire())
+            .with("url", &pack.url)
+            .with("hash", &pack.sha1)
+            .with("required", pack.required)
+            .with("prompt", pack.prompt.clone());
+        call("resource_pack", args)
             .ok()
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
@@ -1214,6 +1327,17 @@ mod tests {
         assert_eq!(i.kind, "minecraft:diamond");
         assert!(!i.is_plain());
         assert_eq!(ItemStack::from_wire(&i.to_wire()), Some(i));
+        let r = ItemStack::new("emerald", 1)
+            .with_model("forja:rubi")
+            .with_data("forja:id", "rubi:rubi")
+            .with_component("max_stack_size", "16");
+        assert!(!r.is_plain());
+        assert_eq!(r.data("forja:id"), Some("rubi:rubi"));
+        assert_eq!(
+            r.command_arg(),
+            r#"minecraft:emerald[item_model="forja:rubi",custom_data={"forja:id":"rubi:rubi"},minecraft:max_stack_size=16]"#
+        );
+        assert_eq!(ItemStack::from_wire(&r.to_wire()), Some(r));
         let b = Block {
             pos: BlockPos::new(worlds::OVERWORLD, 1, -2, 3),
             kind: "minecraft:oak_stairs".into(),
