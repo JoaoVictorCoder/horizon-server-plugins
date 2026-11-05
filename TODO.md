@@ -44,7 +44,7 @@ What is left to do, most important first in each section.
 - [ ] Recipes (shaped, shapeless, furnace), item behaviours in YAML, sounds, armour textures, fonts (emojis, GUI
       backgrounds).
 - [ ] Furniture: `item_display` + interaction entities, barrier and shulker hitboxes (docs/forja.md#hitboxes-for-furniture).
-      Needs entities by handle, a click event for interaction entities, and `minecraft:scale` on mobs.
+      Needs entities by handle and a click event for interaction entities.
 - [ ] Hardness and tools for blocks; tripwire and mushroom blocks as carriers.
 
 ## Engenho (docs/engenho.md)
