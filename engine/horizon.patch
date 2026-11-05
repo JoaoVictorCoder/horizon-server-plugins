@@ -1494,6 +1494,134 @@ index 5daad29..acd5fb6 100644
              } else {
                  None
              },
+diff --git a/crates/horizon-client/src/lan/guest.rs b/crates/horizon-client/src/lan/guest.rs
+index 017904d..dfd4e77 100644
+--- a/crates/horizon-client/src/lan/guest.rs
++++ b/crates/horizon-client/src/lan/guest.rs
+@@ -919,9 +919,67 @@ fn network_stack(
+             horizon_protocol::item::Component::Text(name.clone()),
+         ));
+     }
++    if let Some(d) = s.data() {
++        drawn_components(d, &mut stack);
++    }
+     Some(stack)
+ }
+ 
++/// The components that change how the client draws and describes a stack,
++/// as `/give` or a plugin set them: the model a resource pack gives it, its
++/// lore, rarity, glint, stack size and custom data.
++fn drawn_components(d: &crate::item_data::StackData, stack: &mut Stack) {
++    use horizon_protocol::item::{Component, component};
++    use horizon_world::nbt::Tag;
++    if let Some(Tag::String(model)) = d.other("minecraft:item_model") {
++        stack.added.push((
++            component::ITEM_MODEL,
++            Component::Ident(model.to_string_lossy()),
++        ));
++    }
++    if let Some(Tag::List(lines)) = d.other("minecraft:lore") {
++        let lines: Vec<Tag> = lines.iter().take(256).cloned().collect();
++        stack.added.push((component::LORE, Component::Lore(lines)));
++    }
++    if let Some(Tag::String(rarity)) = d.other("minecraft:rarity") {
++        let id = ["common", "uncommon", "rare", "epic"]
++            .iter()
++            .position(|r| *r == rarity.to_string_lossy());
++        if let Some(id) = id {
++            stack
++                .added
++                .push((component::RARITY, Component::Int(id as i32)));
++        }
++    }
++    let int = |t: &Tag| match t {
++        Tag::Byte(v) => Some(i32::from(*v)),
++        Tag::Short(v) => Some(i32::from(*v)),
++        Tag::Int(v) => Some(*v),
++        _ => None,
++    };
++    if let Some(n) = d.other("minecraft:max_stack_size").and_then(int)
++        && (1..=99).contains(&n)
++    {
++        stack
++            .added
++            .push((component::MAX_STACK_SIZE, Component::Int(n)));
++    }
++    if let Some(glint) = d
++        .other("minecraft:enchantment_glint_override")
++        .and_then(int)
++    {
++        stack.added.push((
++            component::ENCHANTMENT_GLINT_OVERRIDE,
++            Component::Bool(glint != 0),
++        ));
++    }
++    if let Some(data @ Tag::Compound(_)) = d.other("minecraft:custom_data") {
++        stack
++            .added
++            .push((component::CUSTOM_DATA, Component::Nbt(data.clone())));
++    }
++}
++
+ /// `Player.isWithinBlockInteractionRange`: `eye` closer than `range` to the
+ /// box of the block at `pos` (`AABB.distanceToSqr`).
+ pub fn within_block_range(eye: [f64; 3], range: f64, pos: [i32; 3]) -> bool {
+@@ -964,6 +1022,55 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn models_lore_and_custom_data_reach_the_client() {
++        let mut item = ItemStack::new("minecraft:emerald", 1);
++        let d = item.data_mut();
++        d.other = vec![
++            (
++                "minecraft:custom_data".into(),
++                Tag::compound([("forja:id", Tag::String("exemplo:rubi".into()))]),
++            ),
++            ("minecraft:enchantment_glint_override".into(), Tag::Byte(1)),
++            (
++                "minecraft:item_model".into(),
++                Tag::String("exemplo:rubi".into()),
++            ),
++            (
++                "minecraft:lore".into(),
++                Tag::List(vec![Tag::compound([("text", Tag::String("x".into()))])]),
++            ),
++            ("minecraft:max_stack_size".into(), Tag::Int(16)),
++            ("minecraft:rarity".into(), Tag::String("rare".into())),
++        ];
++        let sent = stack_to_network(|_| 7, |_, _| None, &Some(item));
++        let mut writer = Writer::new();
++        horizon_protocol::item::Slot::write(&sent, &mut writer);
++        let mut reader = Reader::new(&writer.data);
++        let got = horizon_protocol::item::Slot::read(&mut reader)
++            .unwrap()
++            .unwrap();
++        assert_eq!(reader.remaining(), 0);
++        assert_eq!(
++            got.component(component::ITEM_MODEL),
++            Some(&Component::Ident("exemplo:rubi".into()))
++        );
++        assert_eq!(got.component(component::RARITY), Some(&Component::Int(2)));
++        assert_eq!(
++            got.component(component::MAX_STACK_SIZE),
++            Some(&Component::Int(16))
++        );
++        assert_eq!(
++            got.component(component::ENCHANTMENT_GLINT_OVERRIDE),
++            Some(&Component::Bool(true))
++        );
++        assert!(matches!(got.component(component::LORE), Some(Component::Lore(l)) if l.len() == 1));
++        assert!(matches!(
++            got.component(component::CUSTOM_DATA),
++            Some(Component::Nbt(_))
++        ));
++    }
++
+     #[test]
+     fn potions_go_as_potion_registry_ids() {
+         let synced_id = |registry: &str, name: &str| match (registry, name) {
 diff --git a/crates/horizon-client/src/lan/hub.rs b/crates/horizon-client/src/lan/hub.rs
 index b1db5b0..1d01a18 100644
 --- a/crates/horizon-client/src/lan/hub.rs
@@ -1615,6 +1743,42 @@ index 591c0df..d945743 100644
          let line = format!("<{name}> {}", message.content);
          self.broadcast_chat(&message, &bound, line, events);
          events.push(HostEvent::PlayerChat {
+diff --git a/crates/horizon-client/src/save.rs b/crates/horizon-client/src/save.rs
+index 7306aa4..679f860 100644
+--- a/crates/horizon-client/src/save.rs
++++ b/crates/horizon-client/src/save.rs
+@@ -278,27 +278,10 @@ pub fn estimate_disk_space(dir: &Path) -> u64 {
+     }
+     #[cfg(windows)]
+     {
+-        use std::os::windows::ffi::OsStrExt;
+-        unsafe extern "system" {
+-            fn GetDiskFreeSpaceExW(
+-                directory: *const u16,
+-                available: *mut u64,
+-                total: *mut u64,
+-                free: *mut u64,
+-            ) -> i32;
+-        }
+-        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+-        let mut available = 0u64;
+-        // SAFETY: `wide` is NUL-terminated and the out pointers are valid or null.
+-        let ok = unsafe {
+-            GetDiskFreeSpaceExW(
+-                wide.as_ptr(),
+-                &mut available,
+-                std::ptr::null_mut(),
+-                std::ptr::null_mut(),
+-            )
+-        };
+-        if ok == 0 { u64::MAX } else { available }
++        // The crate forbids unsafe code, so Windows' GetDiskFreeSpaceExW is
++        // out of reach here: unknown, as when it cannot be asked.
++        let _ = dir;
++        u64::MAX
+     }
+     #[cfg(not(any(unix, windows)))]
+     {
 diff --git a/crates/horizon-server/src/backup.rs b/crates/horizon-server/src/backup.rs
 index c446d56..3957086 100644
 --- a/crates/horizon-server/src/backup.rs

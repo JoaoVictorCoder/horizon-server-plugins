@@ -32,6 +32,8 @@ What is left to do, most important first in each section.
 
 - [x] Phase 1: packs, custom items with textures or models, the resource pack built, served over HTTP and sent
       in game (`Player::send_resource_pack`), `/forja give|get|list|pack|reload`.
+- [x] The server sends clients the components that draw an item (`item_model`, lore, rarity, glint, stack
+      size, custom data): before, only the name reached them and Forja's items kept their vanilla look.
 - [ ] Try phase 1 in game with a vanilla client: the pack's download and prompt, the items' look, `/forja reload`
       while playing.
 - [ ] Know when a player declined or failed to load the pack (`PlayerResourcePackStatusEvent`), and kick on a
