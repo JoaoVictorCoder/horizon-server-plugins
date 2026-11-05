@@ -237,6 +237,11 @@ event! {
     cancellable PlayerBucketEmptyEvent = "player_bucket_empty" { player: Player, block: BlockPos, bucket: ItemStack }
 }
 event! {
+    /// A player right-clicks an entity: a mob, or an interaction entity a
+    /// plugin placed (furniture). Cancel it and the click does nothing.
+    cancellable PlayerInteractEntityEvent = "player_interact_entity" { player: Player, entity: Entity }
+}
+event! {
     /// A player hits an entity (Paper's `PrePlayerAttackEntityEvent`). Cancel
     /// it and the blow does nothing: no damage, no knockback.
     cancellable PrePlayerAttackEntityEvent = "player_attack_entity" { player: Player, entity: Entity }

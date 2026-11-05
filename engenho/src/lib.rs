@@ -19,8 +19,15 @@ use std::path::PathBuf;
 /// The pack, embedded by build.rs: (path under packs/, bytes).
 const PACK: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/pack_files.rs"));
 
-/// A block in the world: world, x, y, z.
-type Key = (String, i32, i32, i32);
+use machines::Key;
+use std::collections::HashSet;
+
+/// Each duct's network, and the machines (with the face they take energy
+/// on) each network feeds.
+type Networks = (
+    HashMap<Key, usize>,
+    HashMap<usize, Vec<(Key, &'static str)>>,
+);
 
 fn key(pos: &BlockPos) -> Key {
     (pos.world.clone(), pos.x, pos.y, pos.z)
@@ -57,6 +64,11 @@ pub struct Engenho {
     /// Engenho's items, read from its own pack, to build them as Forja does.
     items: Content,
     machines: HashMap<Key, Machine>,
+    /// Energy ducts.
+    ducts: HashSet<Key>,
+    /// The ducts' networks and the machines each feeds, worked out again
+    /// when a duct or machine comes or goes.
+    networks: Option<Networks>,
     menus: Vec<OpenMenu>,
     /// Players whose click moved items this tick: their inventory changes at
     /// the next tick's start, so another click this tick would see it stale.
@@ -80,15 +92,28 @@ impl Engenho {
                 .severe("machines.json is damaged: no machines loaded");
             return;
         };
-        for entry in v.as_list().unwrap_or_default() {
+        // `{machines: [...], ducts: [...]}`; a bare list from before ducts.
+        let (list, ducts) = match v.get("machines") {
+            Some(m) => (m.clone(), v.get("ducts").cloned().unwrap_or_default()),
+            None => (v.clone(), Value::Null),
+        };
+        for d in ducts.as_list().unwrap_or_default() {
+            if let Some(pos) = BlockPos::from_wire(d) {
+                self.ducts.insert(key(&pos));
+            }
+        }
+        for entry in list.as_list().unwrap_or_default() {
             let pos = entry.get("pos").and_then(BlockPos::from_wire);
             let machine = entry.get("machine").and_then(Machine::from_value);
             if let (Some(pos), Some(m)) = (pos, machine) {
                 self.machines.insert(key(&pos), m);
             }
         }
-        ctx.logger()
-            .info(&format!("{} machine(s) loaded", self.machines.len()));
+        ctx.logger().info(&format!(
+            "{} machine(s) and {} duct(s) loaded",
+            self.machines.len(),
+            self.ducts.len()
+        ));
     }
 
     fn save(&mut self, ctx: &Ctx<Self>) {
@@ -101,8 +126,12 @@ impl Engenho {
                     .with("machine", m.to_value())
             })
             .collect();
+        let ducts: Vec<Value> = self.ducts.iter().map(|k| pos_of(k).to_wire()).collect();
+        let all = Value::map()
+            .with("machines", Value::List(list))
+            .with("ducts", Value::List(ducts));
         let _ = fs::create_dir_all(ctx.data_folder());
-        match fs::write(Self::save_file(ctx), Value::List(list).to_json()) {
+        match fs::write(Self::save_file(ctx), all.to_json()) {
             Ok(()) => self.dirty = false,
             Err(e) => ctx
                 .logger()
@@ -156,6 +185,87 @@ impl Engenho {
             .message_plugin("Forja", "forja:set_block", message);
     }
 
+    /// Draws a duct joined to what is beside it.
+    fn show_duct(&self, ctx: &Ctx<Self>, k: &Key) {
+        let mut props = Value::map();
+        for (side, joined) in machines::duct_connections(k, &self.ducts, &self.machines) {
+            props.set(side, if joined { "true" } else { "false" });
+        }
+        let message = Value::map()
+            .with("block", "engenho:duto")
+            .with("pos", pos_of(k).to_wire())
+            .with("properties", props);
+        let _ = ctx
+            .server()
+            .message_plugin("Forja", "forja:set_block", message);
+    }
+
+    /// Something came or went at `k`: the ducts there and beside it are
+    /// drawn again, and the networks worked out again.
+    fn changed_at(&mut self, ctx: &Ctx<Self>, k: &Key) {
+        self.networks = None;
+        self.dirty = true;
+        let mut redraw: Vec<Key> = machines::SIDES
+            .iter()
+            .map(|(d, _)| machines::beside(k, *d))
+            .collect();
+        redraw.push(k.clone());
+        for d in redraw {
+            if self.ducts.contains(&d) {
+                self.show_duct(ctx, &d);
+            }
+        }
+    }
+
+    /// Energy through the ducts: each giver hands up to its rate a tick to
+    /// the networks beside it, shared among the machines they reach.
+    fn feed_networks(&mut self) {
+        if self.ducts.is_empty() {
+            return;
+        }
+        if self.networks.is_none() {
+            let nets = machines::duct_networks(&self.ducts);
+            let acceptors = machines::network_acceptors(&nets, &self.machines);
+            self.networks = Some((nets, acceptors));
+        }
+        let Some((nets, acceptors)) = self.networks.clone() else {
+            return;
+        };
+        let givers: Vec<Key> = self
+            .machines
+            .iter()
+            .filter(|(_, m)| m.kind.gives_energy() && m.energy > 0)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for g in givers {
+            for (d, side) in machines::SIDES {
+                let Some(net) = nets.get(&machines::beside(&g, d)) else {
+                    continue;
+                };
+                let Some(list) = acceptors.get(net) else {
+                    continue;
+                };
+                let Some(mut from) = self.machines.remove(&g) else {
+                    break;
+                };
+                if machines::gives_toward(&from, side) {
+                    let targets: Vec<&(Key, &str)> = list.iter().filter(|(k, _)| *k != g).collect();
+                    let mut budget = from.energy.min(from.kind.output_rate());
+                    for (i, (k, _)) in targets.iter().enumerate() {
+                        let share = budget / (targets.len() - i) as u64;
+                        if let Some(to) = self.machines.get_mut(k) {
+                            let n = share.min(to.room());
+                            to.energy += n;
+                            from.energy -= n;
+                            budget -= n;
+                        }
+                    }
+                }
+                self.machines.insert(g.clone(), from);
+            }
+        }
+    }
+
     /// One tick of every machine, then energy to their neighbours.
     fn tick_all(&mut self, ctx: &mut Ctx<Self>) {
         self.tick += 1;
@@ -177,7 +287,7 @@ impl Engenho {
             .collect();
         for k in givers {
             for (d, side) in machines::SIDES {
-                let n = (k.0.clone(), k.1 + d[0], k.2 + d[1], k.3 + d[2]);
+                let n = machines::beside(&k, d);
                 if n == k || !self.machines.contains_key(&n) {
                     continue;
                 }
@@ -190,6 +300,7 @@ impl Engenho {
                 self.machines.insert(k.clone(), from);
             }
         }
+        self.feed_networks();
         for k in changed {
             if let Some(m) = self.machines.get(&k) {
                 Self::show_active(ctx, &k, m);
@@ -544,14 +655,26 @@ impl Plugin for Engenho {
                 .unwrap_or_else(|| "north".into());
             match action.as_str() {
                 "placed" => {
-                    if let Some(kind) = Kind::from_block(&block) {
-                        engenho.machines.insert(k, Machine::new(kind, &facing));
-                        engenho.dirty = true;
+                    if block == "engenho:duto" {
+                        engenho.ducts.insert(k.clone());
+                    } else if let Some(kind) = Kind::from_block(&block) {
+                        engenho
+                            .machines
+                            .insert(k.clone(), Machine::new(kind, &facing));
                     }
+                    // Forja is busy with this message: the ducts are drawn
+                    // again at the next tick.
+                    ctx.run_task(move |engenho, ctx| engenho.changed_at(ctx, &k));
                     Value::Null
                 }
                 "broken" => {
+                    if engenho.ducts.remove(&k) {
+                        let at = k.clone();
+                        ctx.run_task(move |engenho, ctx| engenho.changed_at(ctx, &at));
+                    }
                     if let Some(m) = engenho.machines.remove(&k) {
+                        let at = k.clone();
+                        ctx.run_task(move |engenho, ctx| engenho.changed_at(ctx, &at));
                         for s in m.contents() {
                             engenho.give(&player, &s.id, s.count);
                         }

@@ -131,6 +131,46 @@ state is which block: **keep that file** with the world.
 - Vanilla note blocks still work as decoration, but don't play; note blocks tuned before Forja turned them inert
   may show as custom blocks.
 
+## Furniture
+
+```yaml
+# packs/exemplo/config/furniture.yml
+furniture:
+  mesa:
+    name: '&6Mesa'
+    model: item/mesa            # an item model of the pack, its front facing south (+z)
+    hitbox:
+      - type: shulker           # solid, a 1×1×1 box
+        scale: 1.0
+  banquinho:
+    name: '&6Banquinho'
+    model: item/banquinho
+    rotation: 8                 # 4 (default), 8 or free
+    hitbox:
+      - type: shulker           # solid, half a block
+        scale: 0.5
+      - type: interaction       # what takes the clicks
+        width: 0.6
+        height: 0.55
+```
+
+| Key | What it is |
+|---|---|
+| `model` / `texture` | What the display draws: an item model of the pack (a Blockbench model), or a flat texture. |
+| `scale`, `offset` | The display's size (a number or `[x, y, z]`) and where it sits from the bottom centre of its block (default `[0, 0.5, 0]`, the block's centre). |
+| `rotation` | How it turns toward the player who places it: steps of 90° (`4`), 45° (`8`) or `free`. Offsets turn with it. |
+| `hitbox` | A list, each with an `offset` from the bottom centre: `shulker` (`scale` 0.0625 to 16, `peek` 0 to 100 stretching it up to twice its size), `barrier` (a block offset), `interaction` (`width`, `height`). Without an `interaction`, Forja adds one of a block. |
+| `owner` | A plugin told on `forja:furniture` (`placed`, `broken`, `used`, with `furniture`, `uid`, `pos`, `yaw`, `player`). |
+| `drops`, `name`, `lore`, `material`, `components` | As for blocks. |
+
+- **Right-click** a block with its item to place it on that side; **hit** any of its parts (or its barriers) to break
+  it; a right click on it tells its owner (`used`).
+- Its entities are an `item_display`, invisible shulkers with no AI, interaction entities and barrier blocks, all
+  tagged `forja_<uid>`. Forja keeps each piece in `plugins/Forja/furniture.json`; a piece whose definition is
+  removed is kept there and comes back with it.
+- Collision is the shulkers' and barriers': players stand on them and walk into them. Interaction entities only
+  take clicks.
+
 ## Commands
 
 `/forja` needs `forja.admin` (operators by default).
@@ -233,11 +273,12 @@ code (which follows vanilla's) and what other furniture plugins do:
 | **Interaction entity** | no | any width and height, anywhere | Takes clicks and hits only; the usual way to make furniture clickable ([Nexo](https://docs.nexomc.com/mechanics/furniture-mechanic/hitbox/interaction-hitbox)). |
 | **Boat** | yes | fixed | Collides like the shulker, but drifts and can be ridden: rarely useful. |
 
-**Plan for Forja's furniture:** an `item_display` with the model; an `interaction` entity to click and break it;
+**What Forja does** (see [Furniture](#furniture)), from this plan: an `item_display` with the model; an `interaction` entity to click and break it;
 barriers for the solid parts on the grid, and shulkers for parts off it. A box of any size is shulkers: `scale`
 sets its width (and the base height), the peek stretches it up to twice that along one axis, and a few shulkers
-cover what one can't; happy ghasts give large surfaces to stand on. The engine needs entities by handle (spawn,
-move, remove, a click event on interaction entities).
+cover what one can't; happy ghasts give large surfaces to stand on (not yet a Forja hitbox). The engine patch adds the click
+event on entities (`PlayerInteractEntityEvent`) and lets a shulker without AI still open its shell to its
+`Peek`, as vanilla's does; Forja makes and removes the entities with `/summon` and `/kill` by tag.
 
 ## Roadmap
 
@@ -245,7 +286,8 @@ move, remove, a click event on interaction entities).
 2. **Blocks** (done): states drawn as note block states, placing, breaking, owners.
 3. **More for items**: recipes (shaped, shapeless, furnace) and item behaviours in YAML, sounds
    (`sounds.json`), armour with its own textures (`equippable`), emojis and GUI backgrounds (fonts).
-4. **Furniture**: display entities with the hitboxes above.
+4. **Furniture** (done): display entities with shulker, barrier and interaction hitboxes. Next: seats, happy
+   ghast floors, furniture that changes its look (lamps on and off).
 5. **Block behaviours**: hardness and the right tool, crops, strippable logs, seats; more carriers than note blocks
    (tripwire, mushroom blocks) for blocks that are not full or let light through.
 

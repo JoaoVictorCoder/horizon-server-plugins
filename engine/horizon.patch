@@ -243,7 +243,7 @@ index e6dee53..414e41e 100644
                              // ServerGamePacketListenerImpl.removePlayerFromWorld.
                              let who = self.player_text(&guest.name, guest.uuid);
 diff --git a/crates/horizon-client/src/game/lan_actions.rs b/crates/horizon-client/src/game/lan_actions.rs
-index 137b6c9..291531c 100644
+index 137b6c9..2979c8b 100644
 --- a/crates/horizon-client/src/game/lan_actions.rs
 +++ b/crates/horizon-client/src/game/lan_actions.rs
 @@ -1201,6 +1201,11 @@ impl Game<'_> {
@@ -258,7 +258,25 @@ index 137b6c9..291531c 100644
                      let play = host.play.entry(conn).or_default();
                      play.digging = Some((a.pos, face));
                      play.dig_start = host.hub.ticks;
-@@ -2146,6 +2151,9 @@ impl Game<'_> {
+@@ -1476,6 +1481,17 @@ impl Game<'_> {
+                 {
+                     return;
+                 }
++                // The server's plugins (PlayerInteractEntityEvent): a
++                // cancelled click does nothing.
++                if let Some(t) = self.level_entity(p.id) {
++                    let kind = self.target_type(t);
++                    let at = self.target_position(t).unwrap_or_default();
++                    if self.as_guest(host, conn, |g| g.plugins_interact_entity(p.id, &kind, at))
++                        == Some(true)
++                    {
++                        return;
++                    }
++                }
+                 let before = host.hub.guests[gi].vehicle;
+                 if self
+                     .look_at_entity(host, gi, p.id, Some(p.location))
+@@ -2146,6 +2162,9 @@ impl Game<'_> {
              && self.as_guest(host, conn, |g| {
                  let mut canceled = false;
                  g.native_attack_entity(id, &kind, at, &mut canceled);
@@ -268,7 +286,7 @@ index 137b6c9..291531c 100644
                  canceled
              }) == Some(true)
          {
-@@ -2408,6 +2416,27 @@ impl Game<'_> {
+@@ -2408,6 +2427,27 @@ impl Game<'_> {
          };
          let skip = usize::from(text.starts_with('/'));
          let command = &text[skip..];
@@ -296,7 +314,7 @@ index 137b6c9..291531c 100644
          let d = vanilla::game_dispatcher();
          let level = std::mem::replace(&mut self.ui.registries.permission, permission);
          let parse = d.parse(command, &self.ui.registries);
-@@ -2416,7 +2445,6 @@ impl Game<'_> {
+@@ -2416,7 +2456,6 @@ impl Game<'_> {
          self.ui.registries.permission = level;
          // ServerCommandSuggestionsProvider.limitSuggestionCount.
          suggestions.truncate(1000);
@@ -429,10 +447,10 @@ index 598c794..d499943 100644
              self.native_feedback(
 diff --git a/crates/horizon-client/src/game/plugins.rs b/crates/horizon-client/src/game/plugins.rs
 new file mode 100644
-index 0000000..65be094
+index 0000000..3a631a1
 --- /dev/null
 +++ b/crates/horizon-client/src/game/plugins.rs
-@@ -0,0 +1,1104 @@
+@@ -0,0 +1,1120 @@
 +//! Server plugins (docs/plugins.md): a dedicated server loads the plugin
 +//! libraries in `plugins/` with `horizon-plugin-host` when its world is
 +//! ready, and hands them what the native hook points hear, at the same
@@ -1214,6 +1232,22 @@ index 0000000..65be094
 +        cancelled
 +    }
 +
++    /// `PlayerInteractEntityEvent`: a right click on an entity (an
++    /// interaction entity a plugin placed, a mob...). Whether a plugin
++    /// cancelled it: the click then does nothing.
++    pub(super) fn plugins_interact_entity(&mut self, id: i32, kind: &str, at: [f64; 3]) -> bool {
++        let world = self.plugins_world();
++        let entity = Entity {
++            id,
++            kind: kind.to_owned(),
++            location: Location::new(world, at[0], at[1], at[2]),
++        };
++        let (_, cancelled) = self.plugins_fire("player_interact_entity", |_, d| {
++            d.with("entity", entity.to_wire())
++        });
++        cancelled
++    }
++
 +    /// `PrePlayerAttackEntityEvent`.
 +    pub(super) fn plugins_attack_entity(&mut self, id: i32, kind: &str, at: [f64; 3]) -> bool {
 +        let world = self.plugins_world();
@@ -1802,6 +1836,40 @@ index 591c0df..d945743 100644
          let line = format!("<{name}> {}", message.content);
          self.broadcast_chat(&message, &bound, line, events);
          events.push(HostEvent::PlayerChat {
+diff --git a/crates/horizon-client/src/mobs/ai.rs b/crates/horizon-client/src/mobs/ai.rs
+index dad165b..dff4d68 100644
+--- a/crates/horizon-client/src/mobs/ai.rs
++++ b/crates/horizon-client/src/mobs/ai.rs
+@@ -597,6 +597,9 @@ pub fn tick(
+         if m.species() == Species::Endermite {
+             endermite_lifetime(m);
+         }
++        if m.species() == Species::Shulker {
++            super::shulker::tick_peek(m, w, events);
++        }
+         // AbstractHorse.tick runs the stand counter down with or without AI.
+         if super::equine::is_equine(m.species())
+             && !super::camel::is_camel(m.species())
+diff --git a/crates/horizon-client/src/mobs/shulker.rs b/crates/horizon-client/src/mobs/shulker.rs
+index b37dc28..b4e20ab 100644
+--- a/crates/horizon-client/src/mobs/shulker.rs
++++ b/crates/horizon-client/src/mobs/shulker.rs
+@@ -262,6 +262,15 @@ pub fn tick(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
+         on_peek_change(m, w, old, new, events);
+     }
+ }
++/// The peek half of `Shulker.tick`, for a shulker without AI: vanilla's
++/// `Shulker.tick` eases the peek whether or not the shulker has AI, so a
++/// `NoAI` shulker's `Peek` still opens its shell, and its box with it.
++pub fn tick_peek(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
++    let (old, new) = ease_peek(m);
++    if new != old {
++        on_peek_change(m, w, old, new, events);
++    }
++}
+ /// `Shulker.getPhysicalPeek`: the lid's lift for a peek amount.
+ fn physical_peek(amount: f32) -> f64 {
+     f64::from(0.5 - ((0.5 + amount) * PI).msin() * 0.5)
 diff --git a/crates/horizon-client/src/save.rs b/crates/horizon-client/src/save.rs
 index 7306aa4..679f860 100644
 --- a/crates/horizon-client/src/save.rs

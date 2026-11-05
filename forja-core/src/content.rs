@@ -155,6 +155,7 @@ pub struct Content {
     pub packs: Vec<PackDir>,
     pub items: Vec<ItemDef>,
     pub blocks: Vec<BlockDef>,
+    pub furniture: Vec<crate::furniture::FurnitureDef>,
     /// What was wrong, to log.
     pub warnings: Vec<String>,
 }
@@ -181,6 +182,10 @@ impl Content {
 
     pub fn block(&self, id: &str) -> Option<&BlockDef> {
         self.blocks.iter().find(|b| b.id == id)
+    }
+
+    pub fn furniture(&self, id: &str) -> Option<&crate::furniture::FurnitureDef> {
+        self.furniture.iter().find(|f| f.id == id)
     }
 
     /// The Forja item a stack is, by its mark.
@@ -298,6 +303,24 @@ impl Content {
                             }
                             Ok((block, item)) => {
                                 self.blocks.push(block);
+                                self.items.push(item);
+                            }
+                            Err(e) => self.warnings.push(format!("{at}: {e}")),
+                        }
+                    }
+                }
+                "furniture" => {
+                    for (key, def) in section.1.as_map().unwrap_or_default() {
+                        let at = format!("{file}: furniture.{key}");
+                        match crate::furniture::furniture_def(key, def, pack, namespace) {
+                            Ok((_, item)) if self.items.iter().any(|i| i.id == item.id) => {
+                                self.warnings.push(format!(
+                                    "{at}: an item `{}` exists already; a piece's item has its id",
+                                    item.id
+                                ));
+                            }
+                            Ok((f, item)) => {
+                                self.furniture.push(f);
                                 self.items.push(item);
                             }
                             Err(e) => self.warnings.push(format!("{at}: {e}")),

@@ -43,15 +43,17 @@ What is left to do, most important first in each section.
 - [ ] Try blocks in game: placing (facing), breaking, the pack's `note_block.json`, `/forja reload`.
 - [ ] Recipes (shaped, shapeless, furnace), item behaviours in YAML, sounds, armour textures, fonts (emojis, GUI
       backgrounds).
-- [ ] Furniture: `item_display` + interaction entities, barrier and shulker hitboxes (docs/forja.md#hitboxes-for-furniture).
-      Needs entities by handle and a click event for interaction entities.
+- [x] Furniture: `item_display` + interaction entities, barrier and shulker hitboxes, `PlayerInteractEntityEvent`.
+- [ ] Try furniture in game: the display's look and turn, shulker hitboxes (scale, peek), breaking.
+- [ ] Seats, happy ghast floors, furniture with states.
 - [ ] Hardness and tools for blocks; tripwire and mushroom blocks as carriers.
 
 ## Engenho (docs/engenho.md)
 
 - [x] Grinder, electric furnace, press, generator, solar panel, battery, upgrades, engineering table.
 - [ ] Try it in game: menus, energy between neighbours, saving.
-- [ ] Energy cables, item pipes, cobalt ore in new chunks (chunk events), tiers, more machines.
+- [x] Energy ducts and their networks.
+- [ ] Item pipes, cobalt ore in new chunks (chunk events), tiers, more machines.
 - [ ] Machines that only tick in loaded chunks; pushing items into chests (block entities).
 
 ## New plugins and tools

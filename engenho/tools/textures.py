@@ -341,6 +341,20 @@ def blocks():
     rect(b, 7, 5, 8, 10, (200, 60, 60))
     save("block/bateria_lado", b)
 
+    # Energy duct: a dark insulated block with copper bands; joined faces
+    # show a copper socket.
+    d = metal_panel(14, (52, 60, 78))
+    for i in range(1, 15):
+        d[i][4] = d[i][11] = (190, 110, 60, 255)
+        d[4][i] = d[11][i] = (190, 110, 60, 255)
+    save("block/duto", d)
+    c = [row[:] for row in d]
+    rect(c, 4, 4, 11, 11, (40, 42, 48))
+    rect(c, 5, 5, 10, 10, (205, 120, 66))
+    rect(c, 6, 6, 9, 9, (240, 170, 100))
+    rect(c, 7, 7, 8, 8, (120, 60, 30))
+    save("block/duto_conectado", c)
+
     # Engineering table: a work top with tools.
     t = blank()
     for y in range(16):

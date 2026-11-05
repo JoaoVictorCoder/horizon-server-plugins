@@ -14,7 +14,7 @@
 //! and answers them on `forja:item`, `forja:set_block` and `forja:state`
 //! (docs/forja.md).
 
-pub use forja_core::{blocks, content, http, pack, sha1, zip};
+pub use forja_core::{blocks, content, furniture, http, pack, sha1, zip};
 
 use blocks::{Allocation, NoteState};
 use content::{BlockDef, Content};
@@ -40,6 +40,22 @@ const PACK_ID: Uuid = Uuid(0x6f72_6a61_2d70_4b63_8a5e_464f_524a_4100);
 
 /// The example pack, written on the first start.
 const EXAMPLE: &[(&str, &[u8])] = &[
+    (
+        "exemplo/config/furniture.yml",
+        include_bytes!("../packs/exemplo/config/furniture.yml"),
+    ),
+    (
+        "exemplo/resources/assets/exemplo/models/item/mesa.json",
+        include_bytes!("../packs/exemplo/resources/assets/exemplo/models/item/mesa.json"),
+    ),
+    (
+        "exemplo/resources/assets/exemplo/models/item/banquinho.json",
+        include_bytes!("../packs/exemplo/resources/assets/exemplo/models/item/banquinho.json"),
+    ),
+    (
+        "exemplo/resources/assets/exemplo/textures/block/madeira.png",
+        include_bytes!("../packs/exemplo/resources/assets/exemplo/textures/block/madeira.png"),
+    ),
     (
         "exemplo/pack.yml",
         include_bytes!("../packs/exemplo/pack.yml"),
@@ -74,6 +90,11 @@ pub struct Forja {
     /// Players who placed a block this tick: their hand changes at the next
     /// tick's start, so a second click this tick would place for free.
     placing: Vec<Uuid>,
+    /// The furniture in the world.
+    furniture: Vec<furniture::Instance>,
+    /// Saved pieces whose definition is gone: kept, to come back with it.
+    orphans: Vec<Value>,
+    next_uid: u64,
 }
 
 impl Forja {
@@ -114,6 +135,7 @@ impl Forja {
         {
             log.severe(&format!("could not write states.txt: {e}"));
         }
+        self.load_furniture(ctx);
         if !self.content.blocks.is_empty() {
             // Note blocks keep their state: the others draw custom blocks.
             ctx.server().set_note_blocks_inert(true);
@@ -266,6 +288,194 @@ impl Forja {
         true
     }
 
+    // ---- Furniture ----------------------------------------------------------
+
+    fn furniture_file(ctx: &Ctx<Self>) -> PathBuf {
+        ctx.data_folder().join("furniture.json")
+    }
+
+    fn load_furniture(&mut self, ctx: &Ctx<Self>) {
+        self.furniture.clear();
+        self.orphans.clear();
+        let Ok(text) = fs::read_to_string(Self::furniture_file(ctx)) else {
+            return;
+        };
+        let Ok(v) = Value::from_json(&text) else {
+            ctx.logger()
+                .severe("furniture.json is damaged: no furniture loaded");
+            return;
+        };
+        for entry in v.as_list().unwrap_or_default() {
+            let id = entry.get("id").and_then(Value::to_text).unwrap_or_default();
+            match self
+                .content
+                .furniture(&id)
+                .and_then(|d| furniture::Instance::from_value(entry, d))
+            {
+                Some(i) => {
+                    self.next_uid = self.next_uid.max(i.uid + 1);
+                    self.furniture.push(i);
+                }
+                None => {
+                    if let Some(uid) = entry.get("uid").and_then(Value::as_i64) {
+                        self.next_uid = self.next_uid.max(uid as u64 + 1);
+                    }
+                    self.orphans.push(entry.clone());
+                }
+            }
+        }
+    }
+
+    fn save_furniture(&self, ctx: &Ctx<Self>) {
+        let mut list: Vec<Value> = self.furniture.iter().map(|i| i.to_value()).collect();
+        list.extend(self.orphans.iter().cloned());
+        if let Err(e) = fs::write(Self::furniture_file(ctx), Value::List(list).to_json()) {
+            ctx.logger()
+                .severe(&format!("could not write furniture.json: {e}"));
+        }
+    }
+
+    /// The piece one of whose entities is `entity`.
+    fn piece_of_entity(&self, entity: &Entity) -> Option<usize> {
+        let l = &entity.location;
+        self.furniture
+            .iter()
+            .position(|i| i.world == l.world && i.has_part(&entity.kind, [l.x, l.y, l.z]))
+    }
+
+    /// The piece one of whose barriers is at `pos`.
+    fn piece_of_barrier(&self, pos: &BlockPos) -> Option<usize> {
+        self.furniture
+            .iter()
+            .position(|i| i.world == pos.world && i.has_barrier([pos.x, pos.y, pos.z]))
+    }
+
+    fn notify_piece(
+        &self,
+        ctx: &Ctx<Self>,
+        piece: &furniture::Instance,
+        action: &str,
+        player: &Player,
+    ) -> Value {
+        let Some(owner) = self
+            .content
+            .furniture(&piece.id)
+            .and_then(|d| d.owner.clone())
+        else {
+            return Value::Null;
+        };
+        let [x, y, z] = piece.block();
+        let message = Value::map()
+            .with("action", action)
+            .with("furniture", &piece.id)
+            .with("uid", piece.uid as i64)
+            .with("pos", BlockPos::new(&piece.world, x, y, z).to_wire())
+            .with("yaw", f64::from(piece.yaw))
+            .with("player", player.to_wire());
+        ctx.server()
+            .message_plugin(&owner, "forja:furniture", message)
+            .unwrap_or(Value::Null)
+    }
+
+    /// A player right-clicked `clicked` on `face` holding `def`'s item.
+    fn place_furniture(
+        &mut self,
+        ctx: &mut Ctx<Self>,
+        player: &Player,
+        def: &furniture::FurnitureDef,
+        clicked: &Block,
+        face: BlockFace,
+    ) -> bool {
+        if self.placing.contains(&player.uuid) {
+            return false;
+        }
+        let target = if REPLACEABLE.contains(&clicked.kind.as_str()) {
+            clicked.pos.clone()
+        } else {
+            let [dx, dy, dz] = face.offset();
+            clicked.pos.offset(dx, dy, dz)
+        };
+        let anchor = [
+            f64::from(target.x) + 0.5,
+            f64::from(target.y),
+            f64::from(target.z) + 0.5,
+        ];
+        let yaw = furniture::placed_yaw(def.rotation, player.location.yaw);
+        let piece = furniture::Instance::new(self.next_uid, def, &target.world, anchor, yaw);
+        let free = |p: &BlockPos| {
+            p.block()
+                .is_some_and(|b| REPLACEABLE.contains(&b.kind.as_str()))
+        };
+        let feet = player.location.block();
+        let blocks: Vec<[i32; 3]> = std::iter::once([target.x, target.y, target.z])
+            .chain(piece.barriers.iter().copied())
+            .collect();
+        for [x, y, z] in &blocks {
+            let p = BlockPos::new(&target.world, *x, *y, *z);
+            let in_player = p.x == feet.x && p.z == feet.z && (p.y == feet.y || p.y == feet.y + 1);
+            if !free(&p) || (in_player && piece.has_barrier([p.x, p.y, p.z])) {
+                return false;
+            }
+        }
+        if self
+            .furniture
+            .iter()
+            .any(|i| i.world == piece.world && i.block() == piece.block())
+        {
+            return false;
+        }
+        let components = format!("\"minecraft:item_model\":\"{}\"", def.id);
+        let material = self
+            .content
+            .item(&def.id)
+            .map_or("minecraft:paper".to_owned(), |i| i.material.clone());
+        for line in piece.spawn_commands(def, &material, &components) {
+            ctx.server().dispatch_command(&line);
+        }
+        if player.game_mode != GameMode::Creative
+            && let Some(item) = self.content.item(&def.id)
+        {
+            let left = player
+                .item_in_hand()
+                .map_or(0, |s| s.amount.saturating_sub(1));
+            let stack = (left > 0).then(|| item.stack(left));
+            player.set_equipment("mainhand", stack.as_ref());
+        }
+        self.next_uid += 1;
+        self.placing.push(player.uuid);
+        ctx.run_task(|forja, _| forja.placing.clear());
+        play_at(&target, "minecraft:block.wood.place");
+        self.notify_piece(ctx, &piece, "placed", player);
+        self.furniture.push(piece);
+        self.save_furniture(ctx);
+        true
+    }
+
+    /// Takes piece `index` out of the world, its item to `player`.
+    fn break_furniture(&mut self, ctx: &mut Ctx<Self>, index: usize, player: &Player) {
+        let piece = self.furniture.remove(index);
+        for line in piece.remove_commands() {
+            ctx.server().dispatch_command(&line);
+        }
+        let [x, y, z] = piece.block();
+        play_at(
+            &BlockPos::new(&piece.world, x, y, z),
+            "minecraft:block.wood.break",
+        );
+        let drops = self
+            .content
+            .furniture(&piece.id)
+            .is_some_and(|d| d.drops_self);
+        if drops
+            && player.game_mode != GameMode::Creative
+            && let Some(item) = self.content.item(&piece.id)
+        {
+            player.give_item(&item.stack(1));
+        }
+        self.notify_piece(ctx, &piece, "broken", player);
+        self.save_furniture(ctx);
+    }
+
     fn resource_pack(&self, ctx: &mut Ctx<Self>) -> Option<ResourcePack> {
         let built = self.pack.as_ref()?;
         let prompt = ctx.config().string_or("resource-pack.prompt", "");
@@ -378,9 +588,15 @@ impl Plugin for Forja {
     fn on_enable(&mut self, ctx: &mut Ctx<Self>) {
         ctx.save_default_config(include_str!("../config.yml"));
         let dir = Self::packs_dir(ctx);
-        if !dir.exists() {
+        // The example, once: other plugins may have written their packs
+        // first, and a deleted example stays deleted.
+        let marker = ctx.data_folder().join(".example-written");
+        if !marker.exists() {
             match write_example(&dir) {
-                Ok(()) => ctx.logger().info("wrote the example pack to packs/exemplo"),
+                Ok(()) => {
+                    let _ = fs::write(&marker, "packs/exemplo was written once\n");
+                    ctx.logger().info("wrote the example pack to packs/exemplo");
+                }
                 Err(e) => ctx.logger().severe(&format!("could not write packs/: {e}")),
             }
         }
@@ -430,6 +646,15 @@ impl Plugin for Forja {
                 let (Some(block), Some(face)) = (e.block.clone(), e.face) else {
                     return;
                 };
+                // A piece of furniture's barrier: the piece is used.
+                if block.is("barrier")
+                    && let Some(i) = forja.piece_of_barrier(&block.pos)
+                {
+                    e.set_cancelled(true);
+                    let piece = forja.furniture[i].clone();
+                    forja.notify_piece(ctx, &piece, "used", &e.player);
+                    return;
+                }
                 if let Some((def, props)) = forja.custom_block(&block) {
                     let def = def.clone();
                     let used = forja.notify(ctx, &def, "used", &block.pos, &props, &e.player);
@@ -438,11 +663,23 @@ impl Plugin for Forja {
                         return;
                     }
                 }
-                let Some(def) = e
+                let held = e
                     .item
                     .as_ref()
                     .and_then(|i| forja.content.item_of(i))
-                    .and_then(|i| forja.content.block(&i.id))
+                    .map(|i| i.id.clone());
+                if let Some(def) = held
+                    .as_deref()
+                    .and_then(|id| forja.content.furniture(id))
+                    .cloned()
+                {
+                    e.set_cancelled(true);
+                    forja.place_furniture(ctx, &e.player, &def, &block, face);
+                    return;
+                }
+                let Some(def) = held
+                    .as_deref()
+                    .and_then(|id| forja.content.block(id))
                     .cloned()
                 else {
                     return;
@@ -473,6 +710,58 @@ impl Plugin for Forja {
                     e.player.give_item(&item.stack(1));
                 }
                 forja.notify(ctx, &def, "broken", &pos, &props, &e.player);
+            },
+        );
+
+        // Furniture: a right click on one of its entities uses it, a hit
+        // breaks it, and so does a hit on one of its barriers.
+        ctx.listen(
+            EventPriority::Normal,
+            true,
+            |forja: &mut Forja, ctx, e: &mut PlayerInteractEntityEvent| {
+                if let Some(i) = forja.piece_of_entity(&e.entity) {
+                    e.set_cancelled(true);
+                    let piece = forja.furniture[i].clone();
+                    forja.notify_piece(ctx, &piece, "used", &e.player);
+                }
+            },
+        );
+        ctx.listen(
+            EventPriority::Normal,
+            true,
+            |forja: &mut Forja, ctx, e: &mut PrePlayerAttackEntityEvent| {
+                if let Some(i) = forja.piece_of_entity(&e.entity) {
+                    e.set_cancelled(true);
+                    forja.break_furniture(ctx, i, &e.player);
+                }
+            },
+        );
+        ctx.listen(
+            EventPriority::Normal,
+            true,
+            |forja: &mut Forja, ctx, e: &mut PlayerInteractEvent| {
+                if e.action != "left_click_block" {
+                    return;
+                }
+                if let Some(block) = e.block.clone()
+                    && block.is("barrier")
+                    && let Some(i) = forja.piece_of_barrier(&block.pos)
+                {
+                    e.set_cancelled(true);
+                    forja.break_furniture(ctx, i, &e.player);
+                }
+            },
+        );
+        ctx.listen(
+            EventPriority::Normal,
+            true,
+            |forja: &mut Forja, ctx, e: &mut BlockBreakEvent| {
+                if e.block.is("barrier")
+                    && let Some(i) = forja.piece_of_barrier(&e.block.pos)
+                {
+                    e.set_cancelled(true);
+                    forja.break_furniture(ctx, i, &e.player);
+                }
             },
         );
 
@@ -669,7 +958,8 @@ impl Plugin for Forja {
         });
     }
 
-    fn on_disable(&mut self, _ctx: &mut Ctx<Self>) {
+    fn on_disable(&mut self, ctx: &mut Ctx<Self>) {
+        self.save_furniture(ctx);
         // Stops the HTTP server and frees its port, for /plugins reload.
         self.http = None;
     }

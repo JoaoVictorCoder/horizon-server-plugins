@@ -7,6 +7,88 @@
 //! machines and batteries beside them.
 
 use horizon_plugin_api::Value;
+use std::collections::{HashMap, HashSet};
+
+/// A block in the world: world, x, y, z.
+pub type Key = (String, i32, i32, i32);
+
+/// The block beside `k` across `d`.
+pub fn beside(k: &Key, d: [i32; 3]) -> Key {
+    (k.0.clone(), k.1 + d[0], k.2 + d[1], k.3 + d[2])
+}
+
+/// The energy ducts' networks: each duct's network number, ducts that touch
+/// sharing one.
+pub fn duct_networks(ducts: &HashSet<Key>) -> HashMap<Key, usize> {
+    let mut net: HashMap<Key, usize> = HashMap::new();
+    let mut next = 0;
+    for start in ducts {
+        if net.contains_key(start) {
+            continue;
+        }
+        let mut stack = vec![start.clone()];
+        net.insert(start.clone(), next);
+        while let Some(k) = stack.pop() {
+            for (d, _) in SIDES {
+                let n = beside(&k, d);
+                if ducts.contains(&n) && !net.contains_key(&n) {
+                    net.insert(n.clone(), next);
+                    stack.push(n);
+                }
+            }
+        }
+        next += 1;
+    }
+    net
+}
+
+/// The machines each network feeds: for each network, the machines beside
+/// its ducts that take energy from that side, with the face they take it on.
+pub fn network_acceptors(
+    nets: &HashMap<Key, usize>,
+    machines: &HashMap<Key, Machine>,
+) -> HashMap<usize, Vec<(Key, &'static str)>> {
+    let mut out: HashMap<usize, Vec<(Key, &'static str)>> = HashMap::new();
+    for (duct, n) in nets {
+        for (d, side) in SIDES {
+            let k = beside(duct, d);
+            // The machine's own face toward the duct.
+            let face = opposite(side);
+            if let Some(m) = machines.get(&k)
+                && takes_from(m, face)
+            {
+                let list = out.entry(*n).or_default();
+                if !list.iter().any(|(x, _)| *x == k) {
+                    list.push((k, face));
+                }
+            }
+        }
+    }
+    for list in out.values_mut() {
+        list.sort();
+    }
+    out
+}
+
+/// What a duct joins on each side: another duct or a machine that takes or
+/// gives energy.
+pub fn duct_connections(
+    k: &Key,
+    ducts: &HashSet<Key>,
+    machines: &HashMap<Key, Machine>,
+) -> Vec<(&'static str, bool)> {
+    SIDES
+        .iter()
+        .map(|(d, side)| {
+            let n = beside(k, *d);
+            let joined = ducts.contains(&n)
+                || machines
+                    .get(&n)
+                    .is_some_and(|m| m.kind.accepts_energy() || m.kind.gives_energy());
+            (*side, joined)
+        })
+        .collect()
+}
 
 /// How many items one slot holds.
 pub const STACK: u32 = 64;
@@ -536,6 +618,15 @@ pub const TABLE: &[TableRecipe] = &[
         ingredients: &[("minecraft:iron_ingot", 6), ("engenho:lingote_cobalto", 2)],
     },
     TableRecipe {
+        result: "engenho:duto",
+        count: 6,
+        ingredients: &[
+            ("minecraft:copper_ingot", 3),
+            ("minecraft:redstone", 2),
+            ("minecraft:dried_kelp", 2),
+        ],
+    },
+    TableRecipe {
         result: "engenho:gerador",
         count: 1,
         ingredients: &[
@@ -732,6 +823,34 @@ mod tests {
         assert_eq!(transfer(&mut g, &mut b2, "north"), 80);
         // Machines don't give energy.
         assert_eq!(transfer(&mut m, &mut b2, "north"), 0);
+    }
+
+    fn k(x: i32, y: i32, z: i32) -> Key {
+        ("w".into(), x, y, z)
+    }
+
+    #[test]
+    fn ducts_form_networks_and_find_machines() {
+        let ducts: HashSet<Key> = [k(0, 0, 0), k(1, 0, 0), k(2, 0, 0), k(5, 0, 0)].into();
+        let nets = duct_networks(&ducts);
+        assert_eq!(nets[&k(0, 0, 0)], nets[&k(2, 0, 0)]);
+        assert_ne!(nets[&k(0, 0, 0)], nets[&k(5, 0, 0)]);
+        let mut machines = HashMap::new();
+        machines.insert(k(3, 0, 0), Machine::new(Kind::Furnace, "north"));
+        // A battery whose front faces the duct gives, it doesn't take.
+        machines.insert(k(-1, 0, 0), Machine::new(Kind::Battery, "east"));
+        machines.insert(k(1, 1, 0), Machine::new(Kind::Battery, "north"));
+        let acc = network_acceptors(&nets, &machines);
+        let list = &acc[&nets[&k(0, 0, 0)]];
+        assert_eq!(list, &vec![(k(1, 1, 0), "down"), (k(3, 0, 0), "west")]);
+        let c = duct_connections(&k(0, 0, 0), &ducts, &machines);
+        assert_eq!(
+            c.iter()
+                .filter(|(_, j)| *j)
+                .map(|(s, _)| *s)
+                .collect::<Vec<_>>(),
+            vec!["east", "west"]
+        );
     }
 
     #[test]

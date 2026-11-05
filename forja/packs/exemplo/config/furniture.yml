@@ -1,0 +1,30 @@
+# Furniture: a model drawn by a display entity, with hitboxes of its own.
+#   model:    an item model of the pack, its front facing south (+z)
+#   rotation: 4 (default), 8 or free: how it turns toward the player
+#   scale:    the display's size; offset: where it sits (default: the block's centre)
+#   hitbox:   shulker (solid: scale sets its size, peek 0-100 stretches it up to
+#             twice that upward), barrier (solid, on the grid), interaction
+#             (takes clicks, not solid; one block is added if none is given)
+# Right-click to place, hit to break. /forja give <player> exemplo:mesa
+
+furniture:
+  mesa:
+    name: '&6Mesa'
+    model: item/mesa
+    hitbox:
+      # A full block, solid: you can put things on it and walk into it.
+      - type: shulker
+        scale: 1.0
+
+  banquinho:
+    name: '&6Banquinho'
+    model: item/banquinho
+    rotation: 8
+    hitbox:
+      # Half a block, off the grid's size: a shulker scaled to 0.5.
+      - type: shulker
+        scale: 0.5
+        offset: [0, 0, 0]
+      - type: interaction
+        width: 0.6
+        height: 0.55

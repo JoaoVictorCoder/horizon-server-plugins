@@ -104,3 +104,31 @@ blocks:
       side: block/bateria_lado
       top: block/carcaca_topo
       bottom: block/carcaca_base
+
+  # Energy ducts: full blocks, so the blocks beside them are drawn whole.
+  # A socket shows on each face joined to a duct or a machine.
+  duto:
+    owner: Engenho
+    name: '&fDuto de Energia'
+    lore: ['&7Leva energia de geradores e baterias', '&7às máquinas ligadas a ele.']
+    properties:
+      north: ['false', 'true']
+      south: ['false', 'true']
+      east: ['false', 'true']
+      west: ['false', 'true']
+      up: ['false', 'true']
+      down: ['false', 'true']
+    textures:
+      north: block/duto
+      south: block/duto
+      east: block/duto
+      west: block/duto
+      up: block/duto
+      down: block/duto
+    variants:
+      north=true: {textures: {north: block/duto_conectado}}
+      south=true: {textures: {south: block/duto_conectado}}
+      east=true: {textures: {east: block/duto_conectado}}
+      west=true: {textures: {west: block/duto_conectado}}
+      up=true: {textures: {up: block/duto_conectado}}
+      down=true: {textures: {down: block/duto_conectado}}
